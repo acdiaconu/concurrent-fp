@@ -26,9 +26,6 @@ reset = return . runC
 shift :: ((a -> w) -> DCont w w) -> DCont w a
 shift f = DCont (runC . f)
 
--- reset0 :: DCont a a -> DCont w a
--- reset0 = return . runC
-
 data Expr = 
         Number Int
     |   Variable String
@@ -40,8 +37,6 @@ data Expr =
     |   Pipe Expr Expr
     |   Intrerrupt           -- should only appear in Parallel, easy to enforce
     |   Parallel [Expr]      -- just 2 components, we don't deal with nested parallelism here
-    |   Throw Expr
-    |   TryCatch Expr Expr
 
 data Defn = Val String Expr
 
@@ -50,7 +45,6 @@ data Value =
     |   IntVal Int
     |   BoolVal Bool
     |   Closure String Env Expr
-    |   Exception Value
     |   Suspended (Value -> Value)
 
 instance Show Value where
@@ -59,7 +53,6 @@ instance Show Value where
   show (Closure _ _ _) = "<closure>"
   show (Unit) = "unit"
   show (Suspended _) = "suspended?"
-  show (Exception e) = "exception " ++ show e
 
 type Env = Environment Value
 
@@ -82,30 +75,14 @@ eval (Pipe e1 e2) env =
 
 eval Intrerrupt env = shift (\k -> return $ (Suspended k))
 
-eval (Parallel es) env = shift (\k -> scheduler (map (\e -> reset (eval e env)) es) k)
-
-eval (Throw th) env = eval th env >>= (\v -> shift (\k -> return $ Exception v))
-
-eval (TryCatch es ef) env = reset $ shift (\k -> (eval es env)) >>= 
-                                    (\(Exception v) -> eval ef env >>= 
-                                      (\(Closure x env' body) -> 
-                                        eval body (define env' x v) >>= (\v -> return v)))
+eval (Parallel es) env = shift (\k -> scheduler (map (\e -> reset (eval e env)) es))
 
 scheduler :: [DCont Value Value] -> (Value -> Value) -> DCont Value Value
-scheduler [] exit = return (exit Unit)   
-scheduler (k:ks) exit = k >>= (\v -> case v of 
-    Suspended k -> scheduler (ks ++ [DCont (\k' -> (k'.k) Unit)]) exit
-    Exception v -> shift (\_ -> return $ exit (Exception v))
-    _           -> scheduler ks exit)
+scheduler []     = return Unit   
+scheduler (k:ks) = k >>= (\v -> case v of 
+    Suspended k -> scheduler (ks ++ [return (k Unit)])
+    _           -> scheduler ks)
 
 elab :: Defn -> Env -> DCont Value Env
 elab (Val x e) env = 
   eval e env >>= (\v -> return (define env x v))
-
--- TODO:
---     - shift0? or another mechanism to make exceptions propagate!
---     - add answer type to eval, and see how that fits
---     - see if state can be added nicely, maybe it's a really cool thing
-
-myBad :: Int
-myBad = runC $ reset ( (liftM2 (+) (return 5) (reset( liftM2 (+) (return 1) (shift (\k -> return $ k 5))) >>= (\v -> shift (\k -> return $ k v)))))

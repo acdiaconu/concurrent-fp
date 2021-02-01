@@ -1,9 +1,13 @@
-module Toy where
+{-# LANGUAGE Rank2Types, GeneralizedNewtypeDeriving, MultiParamTypeClasses,
+    UndecidableInstances, FunctionalDependencies, FlexibleInstances, GADTs #-}
+
+module Toy2 where
 
 import Environment
 import Debug.Trace
 import Control.Monad
 import Control.Monad.CC
+import Control.Monad.Identity
 
 data Expr = 
         Number Int
@@ -21,15 +25,15 @@ data Expr =
 
 data Defn = Val String Expr
 
-data Value = 
+data Value i = 
         Unit
     |   IntVal Int
     |   BoolVal Bool
-    |   Closure String Env Expr
-    |   Exception Value
-    |   Suspended (Value -> Value)
+    |   Closure String (Env i) Expr
+    |   Exception (Value i)
+    |   Suspended (CC i (Value i))
 
-instance Show Value where
+instance Show (Value i) where
   show (IntVal n) = show n
   show (BoolVal b) = if b then "true" else "false"
   show (Closure _ _ _) = "<closure>"
@@ -37,43 +41,54 @@ instance Show Value where
   show (Suspended _) = "suspended?"
   show (Exception e) = "exception " ++ show e
 
-type Env = Environment Value
+type Env i = Environment (Value i)
 
-eval :: Expr -> Env -> CC i Value 
-eval (Number n) env = trace ("number" ++ show n) (return (IntVal n))
-eval (Variable v) env = return (find env v)
-eval (Apply f e) env = eval f env >>= (\(Closure id env' body) ->
-    eval e env >>= (\v -> eval body (define env' id v))) 
-eval (If e1 e2 e3) env =
-  eval e1 env >>= (\b ->
+eval :: Expr -> Env i -> Prompt i (Value i) -> CC i (Value i)
+eval (Number n) _ _ = trace ("number" ++ show n) (return (IntVal n))
+eval (Variable v) env _ = return (find env v)
+eval (Apply f e) env p = eval f env p >>= (\(Closure id env' body) ->
+    eval e env p >>= (\v -> eval body (define env' id v) p))
+eval (If e1 e2 e3) env p =
+  eval e1 env p >>= (\b ->
     case b of
-      BoolVal True -> eval e2 env
-      BoolVal False -> eval e3 env
+      BoolVal True -> eval e2 env p
+      BoolVal False -> eval e3 env p
       _ -> error "boolean required in conditional")
-eval (Lambda x e1) env = return $ Closure x env e1
-eval (Let d e1) env =
-  elab d env >>= (\env' -> eval e1 env')
-eval (Pipe e1 e2) env = 
-  eval e1 env >>= (\_ -> eval e2 env)
+eval (Lambda x e1) env _ = return $ Closure x env e1
+eval (Let d e1) env p =
+  elab d env p >>= (\env' -> eval e1 env' p)
+eval (Pipe e1 e2) env p = 
+  eval e1 env p >>= (\_ -> eval e2 env p)
 
--- eval Intrerrupt env = shift (\k -> return $ (Suspended k))
+eval Intrerrupt env p = (shift p $ \k -> (return (Suspended $ k (return Unit))))
 
--- eval (Parallel es) env = shift (\k -> scheduler (map (\e -> reset (eval e env)) es) k)
+--investigate why removing p'' fucks
+eval (Parallel es) env p = reset $ \p'' -> interleave (map (\e -> reset $ \p' -> (eval e env p')) es) p''
 
--- eval (Throw th) env = eval th env >>= (\v -> shift (\k -> return $ Exception v))
+eval (Throw th) env p = eval th env p >>= (\v -> (shift p (\k -> (return (Exception v)))))
 
--- eval (TryCatch es ef) env = reset $ shift (\k -> (eval es env)) >>= 
---                                     (\(Exception v) -> eval ef env >>= 
---                                       (\(Closure x env' body) -> 
---                                         eval body (define env' x v) >>= (\v -> return v)))
+eval (TryCatch es ef) env p = eval es env p >>= 
+                                (\v -> (case v of
+                                  Exception e -> (eval ef env p >>= (\(Closure x env' body) -> 
+                                                  eval body (define env' x v) p))
+                                  _           -> return v))
 
--- scheduler :: [DCont Value Value] -> (Value -> Value) -> DCont Value Value
--- scheduler [] exit = return (exit Unit)   
--- scheduler (k:ks) exit = k >>= (\v -> case v of 
---     Suspended k -> scheduler (ks ++ [DCont (\k' -> (k'.k) Unit)]) exit
---     Exception v -> shift (\_ -> return $ exit (Exception v))
---     _           -> scheduler ks exit)
+interleave :: [CC i (Value i)] -> Prompt i (Value i) -> CC i (Value i) 
+interleave [] p = return Unit 
+interleave (k:ks) p = k >>= (\v -> case v of 
+    Suspended k -> interleave (ks ++ [k]) p
+    Exception e -> abort p (return (Exception e))
+    _           -> interleave ks p)
 
-elab :: Defn -> Env -> CC i Env 
-elab (Val x e) env = 
-  eval e env >>= (\v -> return (define env x v))
+elab :: Defn -> Env i -> Prompt i (Value i) -> CC i (Env i)
+elab (Val x e) env p = 
+  eval e env p >>= (\v -> return (define env x v))
+
+main = y >>= (\v -> case v of
+  IntVal n -> return (IntVal n)
+  Unit -> return Unit)
+  where y = newPrompt >>= (\p -> (eval ex empty_env p))
+        ex = TryCatch (Parallel [Pipe (Pipe (Intrerrupt) (Throw (Number 5))) (Number 42), 
+                                 Pipe (Pipe (Number 2) ex') (Number 6)]) 
+             (Lambda "x" (Number 52))
+        ex' = Parallel [TryCatch (Parallel [Pipe (Intrerrupt) (Number 6), Pipe (Pipe (Number 5) (Throw (Number 10))) (Number 6969)]) (Lambda "x" (Number 52)), Number 50] 
