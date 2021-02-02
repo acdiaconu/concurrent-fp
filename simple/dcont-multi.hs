@@ -62,10 +62,10 @@ eval (Pipe e1 e2) env p =
 
 eval Intrerrupt env p = (shift p $ \k -> (return (Suspended $ k (return Unit))))
 
---investigate why removing p'' fucks
-eval (Parallel es) env p = reset $ \p'' -> interleave (map (\e -> reset $ \p' -> (eval e env p')) es) p''
+eval (Parallel es) env p = reset $ \outer -> 
+                             interleave (map (\e -> reset $ \each -> (eval e env each)) es) outer
 
-eval (Throw th) env p = eval th env p >>= (\v -> (shift p (\k -> (return (Exception v)))))
+eval (Throw th) env p = eval th env p >>= (\v -> (shift p (\k -> (return $ Exception v))))
 
 eval (TryCatch es ef) env p = eval es env p >>= 
                                 (\v -> (case v of
@@ -74,11 +74,11 @@ eval (TryCatch es ef) env p = eval es env p >>=
                                   _           -> return v))
 
 interleave :: [CC i (Value i)] -> Prompt i (Value i) -> CC i (Value i) 
-interleave [] p = return Unit 
-interleave (k:ks) p = k >>= (\v -> case v of 
-    Suspended k -> interleave (ks ++ [k]) p
-    Exception e -> abort p (return (Exception e))
-    _           -> interleave ks p)
+interleave [] _ = return Unit 
+interleave (k:ks) outer = k >>= (\v -> case v of 
+    Suspended k -> interleave (ks ++ [k]) outer
+    Exception e -> abort outer (return $ Exception e)
+    _           -> interleave ks outer)
 
 elab :: Defn -> Env i -> Prompt i (Value i) -> CC i (Env i)
 elab (Val x e) env p = 
