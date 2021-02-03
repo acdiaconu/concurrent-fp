@@ -1,187 +1,176 @@
--- module Interpreter(dialog, init_mem, obey, empty_env, funParser) where
+module Interpreter(dialog, init_mem, empty_env, funParser) where
 
--- import Parsing
--- import FunSyntax
--- import FunParser
--- import Environment
--- import Memory
--- import Debug.Trace
+import Parsing
+import FunSyntax
+import FunParser
+import Environment
+import CState
 
--- -- MONAD
+import Control.Monad
+import Control.Monad.CC
 
--- infixl 1 $>
+import Debug.Trace
 
--- newtype Cont a = Cont (a -> (Chs, [Cont a]) -> Answer)
+-- State monad
+-- TODO: A more algebraic approach, to allow easy combination of ``pure"
+--       algebraic effects (i.e. create a class for state as a first step)
 
--- type M a = (Chs, [Cont a]) -> Cont () -> Cont a -> Answer
+newtype State s a = State { runState :: s -> (a, s) }
 
--- result x mem (Cont kx) (Cont ks) = ks x mem
+instance Monad (State s) where
+  return a = State $ \s -> (a, s)
+  (State sm) >>= f = State $ \s -> let (a, newS) = sm s
+                                       (State rs) = f a 
+                                   in rs newS
 
--- -- TODO: see how to remove with the $! 
--- (xm $> f) mem (Cont kx) (Cont ks) =
---   xm mem (Cont kx) (Cont (\ x mem' -> (f $! x) mem' (Cont kx) (Cont ks)))
+instance Functor (State s) where
+  fmap f (State m) = State $ \s -> let (a, newS) = m s
+                                    in (f a, newS)
 
--- new :: M Location
--- new (mem, res) (Cont kx) (Cont ks) = let (a, mem') = fresh mem in ks a (mem', res)
+instance Applicative (State s) where
+  pure = return
 
--- get :: Location -> M (CState Env Value (Cont Value))
--- get a (mem, resume) (Cont kx) (Cont ks) = ks (contents mem a) (mem, resume)
+-- Ops
 
--- put :: Location -> CState Env Value (Cont Value) -> M ()
--- put a v (mem, resume) (Cont kx) (Cont ks) = ks () (update (mem, resume) a v)
+get :: Location -> State (ChanState i) (CType i)
+get l = State $ \chs -> (contents chs l, chs)
 
--- addtask :: Cont a -> M ()
--- addtask K (mem, resume) (Cont kx) (Cont ks) = ks () (update (mem, resume ++ [K]) a v)
+put :: Location -> CType i -> State (ChanState i) ()
+put l ct = State $ \chs -> ((), update chs l ct)
 
--- addpriority :: Cont a -> M ()
--- addpriority K (mem, resume) (Cont kx) (Cont ks) = ks () (update (mem, K:resume) a v)
+new :: State (ChanState i) Location
+new = State $ \chs -> let (l, chs') = fresh chs in (l, chs')
 
--- removetask :: M ()
--- removetask (mem, (r:resume)) (Cont kx) (Cont ks) = ks () (update (mem, resume) a v)
+-- SEMANTIC DOMAINS
 
--- exit :: M a
--- exit mem (Cont kx) (Cont ks) = kx () mem
+type Env i = Environment (Value i)
+type CState i = ChanState (Value i)
 
--- orelse :: M a -> M a -> M a
--- orelse xm ym mem (Cont kx) (Cont ks) =
---   xm mem (Cont (\ () mem' -> ym mem' (Cont kx) (Cont ks))) (Cont ks)
+data Value i = 
+    Unit
+  | IntVal Integer
+  | BoolVal Bool
+  | ChanHandler Location
+  | Closure String (Env i) Expr
+  | WaitRecvVal (Value i)
+  | WaitSendVal (Value i) (Value i)
+  | Exception (Value i)
+  | Suspended (CC i (Value i))
 
--- callkx :: (Cont () -> M a) -> M a
--- callkx f mem (Cont kx) (Cont ks) = f (Cont kx) mem (Cont kx) (Cont ks)
+-- -- AUXILIARY FUNCTIONS ON VALUES
 
--- withkx :: Cont () -> M a -> M a
--- withkx (Cont kx) xm mem (Cont kx') (Cont ks) = xm mem (Cont kx) (Cont ks)
+instance Eq (Value i) where
+  IntVal a == IntVal b = a == b
+  BoolVal a == BoolVal b = a == b
+  _ == _ = False
 
--- getks :: M a -> M (a, Cont a)
--- withkx xm mem (Cont kx) (Cont ks) = (xm mem (Cont kx) (Cont ks), (Cont ks))
+instance Show (Value i) where
+  show (IntVal n) = show n
+  show (BoolVal b) = if b then "true" else "false"
+  show (ChanHandler a) = "<chan handler " ++ show a ++ ">"
+  show (Closure _ _ _) = "<closure>"
+  show (Exception v ) = "<exception -> " ++ show v ++ ">"
 
--- -- SEMANTIC DOMAINS
+-- EVALUATOR
 
--- type Env = Environment Value
--- type Chs = ChansState Env Value (Cont Value)
+eval :: Expr -> Env i -> Prompt i (Value i) -> CC i (Value i)
+eval (Number n) _ _ = trace ("number" ++ show n) (return (IntVal n))
 
--- -- EVALUATOR
+eval (Variable v) env _ = return (find env v)
 
--- eval :: Expr -> Env -> M Value
--- eval (Number n) env = result (IntVal n)
--- eval (Variable x) env = result (find env x)
+eval (Apply f e) env p = 
+  eval f env p >>= (\ (Closure id env' body) ->
+    eval e env p >>= (\ v -> eval body (define env' id v) p))
 
--- eval (Apply f e) env =
---   eval f env $> (\(Closure x env body) ->
---     eval e env $> (\arg ->
---       eval body (define env x arg)))
+eval (If e1 e2 e3) env p =
+  eval e1 env p >>= (\b ->
+    case b of
+      BoolVal True -> eval e2 env p
+      BoolVal False -> eval e3 env p
+      _ -> error "boolean required in conditional")
 
--- eval (If e1 e2 e3) env =
---   eval e1 env $> (\b ->
---     case b of
---       BoolVal True -> eval e2 env
---       BoolVal False -> eval e3 env
---       _ -> error "boolean required in conditional")
--- eval (Lambda x e1) env = result $ Closure x env e1
--- eval (Let d e1) env =
---   elab d env $> (\env' -> eval e1 env')
+eval (Lambda x e1) env _ = return $ Closure x env e1
 
--- eval (Pipe e1 e2) env = 
---   eval e1 env $> (\_ -> eval e2 env)
+eval (Let d e1) env p =
+  elab d env p >>= (\env' -> eval e1 env' p)
 
--- eval NewChan env = new $> (\l -> result $ ChanHandler l)
+eval (Pipe e1 e2) env p = 
+  eval e1 env p >>= (\_ -> eval e2 env p)
 
--- eval (Par es) env =
---   runPar (map (\e -> Cont (\Unit mem -> eval e env mem kx terminate)) es) [] $> (\vs -> 
---     ks (Multi vs))
+eval Stop env p = (shift p $ \k -> (return (Suspended $ k (return Unit))))
 
--- -- eval (Send e1 e2) env mem kx ks =
--- --   eval e1 env mem kx (\(ChanHandler c) mem1 -> 
--- --     eval e2 env mem1 kx (\v mem2 -> 
--- --       get c mem2 kx (\s _ -> 
--- --         case s of (
--- --         Empty -> put c (WR v ks) mem2 kx (\() mem3 -> addtask ks mem3 (\() mem4 -> removetask *****))
--- --         WW (Cont w_ks) -> put c Empty mem2 kx (\() mem3 -> addpriority w_ks mem3 kx ks)
--- --         WR _ -> error "only one-to-one component communication possible"
--- --       ))))
+eval (Parallel es) env p = reset $ \outer -> 
+                             interleave (map (\e -> reset $ \each -> (eval e env each)) es) outer
 
--- -- How do I stop the process? 
--- -- idea: maybe have the processes again like a dictionary, in which for locations
--- -- will be 1 - n, and process i interacts with processes i-1 i+1 (wraparound); 
--- -- the dict will have the itema continuations, meaning where each process needs to go next
+eval (Throw th) env p = eval th env p >>= (\v -> (shift p (\k -> (return $ Exception v))))
 
--- -- we stop when no more processes
--- -- with the first continaution, i need to kinda put is after each component finishes
--- -- think it's a good idea??? like this is truly the suspended state??? omg actually this
--- -- can replace the suspended state???? like it has the same exact idea!!!!!!!!!!!!!
+  -- | Send Expr Expr
+  -- | Receive Expr
+  -- | Stop
+  -- | NewChan  
 
--- -- eval (Send e1 e2) env =
--- --   eval e1 env $> (\(ChanHandler c) -> 
--- --     getks (eval e2 env) $> (\(v, (Cont hijacked)) ->
--- --       get c $> (\s -> case s of (
--- --         Empty -> put c (WR v (Cont hijacked)) $> (\() -> result Unit)
--- --         WW (Cont w_ks) -> put c Emtpy $> (\() -> hijacked () -> w_ks v)
--- --         WR _ -> error "only one-to-one component communication possible"
--- --       ) 
+eval (TryCatch es ef) env p = eval es env p >>= 
+                                (\v -> (case v of
+                                  Exception e -> (eval ef env p >>= (\(Closure x env' body) -> 
+                                                  eval body (define env' x v) p))
+                                  _           -> return v))
 
--- -- eval (Receive e) env = 
--- --   eval e env $> (\(ChanHandler c) -> result $ WaitRecvVal (ChanHandler c))
+interleave :: [CC i (Value i)] -> Prompt i (Value i) -> CC i (Value i) 
+interleave [] _ = return Unit 
+interleave (k:ks) outer = k >>= (\v -> case v of 
+    Suspended k -> interleave (ks ++ [k]) outer
+    Exception e -> abort outer (return $ Exception e)
+    _           -> interleave ks outer)
 
--- sequenc [] = return []
--- sequenc (m:ms) = m $> (\x -> sequenc ms $> (\xs -> result (x:xs)))
+elab :: Defn -> Env i -> Prompt i (Value i) -> CC i (Env i)
+elab (Val x e) env p = 
+  eval e env p >>= (\v -> return (define env x v))
+elab (Rec x e) env p =
+  case e of
+    Lambda fp body ->
+      return env' where env' = define env x (Closure fp env' body)
+    _ ->
+      error "RHS of letrec must be a lambda"
 
--- -- ok rest = all (\(ex, _, _) -> 
--- --     case ex of
--- --       Returned (WaitRecvVal _) -> False
--- --       Returned (WaitSendVal _ _) -> False
--- --       Returned _ -> True
--- --       _ -> error "wtf"
--- --   ) rest
+-- -- INITIAL ENVIRONMENT
 
--- elab :: Defn -> Env -> M Env
--- elab (Val x e) env = 
---   eval e env $> (\v -> result (define env x v))
--- elab (Rec x e) env =
---   case e of
---     Lambda fp body ->
---       result env' where env' = define env x (Closure fp env' body)
---     _ ->
---       error "RHS of letrec must be a lambda"
+-- init_env :: Env
+-- init_env =
+--   make_env [constant "nil" Nil, 
+--     constant "true" (BoolVal True), constant "false" (BoolVal False),
+--     pureprim "+" (\ (IntVal a) -> Function (\(IntVal b) -> result $ IntVal (a + b)))]
+--     -- pureprim "-" (\ (IntVal a) (IntVal b) -> IntVal (a - b)),
+--     -- pureprim "*" (\ (IntVal a) (IntVal b) -> IntVal (a * b)),
+--     -- pureprim "div" (\ (IntVal a) (IntVal b) ->
+--     --   if b == 0 then error "Dividing by zero" else IntVal (a `div` b)),
+--     -- pureprim "mod" (\ (IntVal a) (IntVal b) ->
+--     --   if b == 0 then error "Dividing by zero" else IntVal (a `mod` b)),
+--     -- pureprim "~" (\ [IntVal a] -> IntVal (- a)),
+--     -- pureprim "<" (\ (IntVal a) (IntVal b) -> BoolVal (a < b)),
+--     -- pureprim "<=" (\ (IntVal a) (IntVal b) -> BoolVal (a <= b)),
+--     -- pureprim ">" (\ (IntVal a) (IntVal b) -> BoolVal (a > b)),
+--     -- pureprim ">=" (\ (IntVal a) (IntVal b) -> BoolVal (a >= b)),
+--     -- pureprim "=" (\ a b -> BoolVal (a == b)),
+--     -- pureprim "<>" (\ a b -> BoolVal (a /= b)),
+--     -- pureprim "integer" (\ a ->
+--     --   case a of IntVal _ -> BoolVal True; _ -> BoolVal False),
+--     -- pureprim "head" (\ (Cons h t) -> h),
+--     -- pureprim "tail" (\ (Cons h t) -> t),
+--     -- pureprim ":" (\ a b -> Cons a b),
+--     -- pureprim "list" (\ xs -> foldr Cons Nil xs),
+--     -- primitive "print" (\ v -> output (show v) $> (\ () -> result v))]
+--     where
+--     constant x v = (x, v)
+--     primitive x f = (x, Function (primwrap x f))
+--     pureprim x f = (x, Function (primwrap x (\args -> result (f args))))
 
--- -- -- INITIAL ENVIRONMENT
+-- -- MAIN PROGRAM
 
--- -- init_env :: Env
--- -- init_env =
--- --   make_env [constant "nil" Nil, 
--- --     constant "true" (BoolVal True), constant "false" (BoolVal False),
--- --     pureprim "+" (\ (IntVal a) -> Function (\(IntVal b) -> result $ IntVal (a + b)))]
--- --     -- pureprim "-" (\ (IntVal a) (IntVal b) -> IntVal (a - b)),
--- --     -- pureprim "*" (\ (IntVal a) (IntVal b) -> IntVal (a * b)),
--- --     -- pureprim "div" (\ (IntVal a) (IntVal b) ->
--- --     --   if b == 0 then error "Dividing by zero" else IntVal (a `div` b)),
--- --     -- pureprim "mod" (\ (IntVal a) (IntVal b) ->
--- --     --   if b == 0 then error "Dividing by zero" else IntVal (a `mod` b)),
--- --     -- pureprim "~" (\ [IntVal a] -> IntVal (- a)),
--- --     -- pureprim "<" (\ (IntVal a) (IntVal b) -> BoolVal (a < b)),
--- --     -- pureprim "<=" (\ (IntVal a) (IntVal b) -> BoolVal (a <= b)),
--- --     -- pureprim ">" (\ (IntVal a) (IntVal b) -> BoolVal (a > b)),
--- --     -- pureprim ">=" (\ (IntVal a) (IntVal b) -> BoolVal (a >= b)),
--- --     -- pureprim "=" (\ a b -> BoolVal (a == b)),
--- --     -- pureprim "<>" (\ a b -> BoolVal (a /= b)),
--- --     -- pureprim "integer" (\ a ->
--- --     --   case a of IntVal _ -> BoolVal True; _ -> BoolVal False),
--- --     -- pureprim "head" (\ (Cons h t) -> h),
--- --     -- pureprim "tail" (\ (Cons h t) -> t),
--- --     -- pureprim ":" (\ a b -> Cons a b),
--- --     -- pureprim "list" (\ xs -> foldr Cons Nil xs),
--- --     -- primitive "print" (\ v -> output (show v) $> (\ () -> result v))]
--- --     where
--- --     constant x v = (x, v)
--- --     primitive x f = (x, Function (primwrap x f))
--- --     pureprim x f = (x, Function (primwrap x (\args -> result (f args))))
+type ProgState i = (Env i, ChanState i)
+type Answer i = (String, ProgState i)
 
--- -- -- MAIN PROGRAM
-
--- type ProgState = (Env, Chs)
--- type Answer = (String, ProgState)
--- terminate = ("", (empty_env, init_mem))
-
--- obey :: Phrase -> ProgState -> (String, ProgState)
+-- obey :: Phrase -> ProgState i -> (String, ProgState i)
+-- obey _ p = ("done", p)
 -- obey (Calculate exp) (env, mem) =
 --   eval exp env mem
 --     (Cont $ \ () mem' -> ("***exit in main program***", (env, mem')))

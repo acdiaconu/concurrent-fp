@@ -2,7 +2,6 @@
 module FunSyntax where
 
 import Environment
-import Memory
 
 data Phrase =
     Calculate Expr

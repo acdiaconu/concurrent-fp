@@ -24,6 +24,7 @@ dependencies:
 - containers
 - unix
 - CC-delcont >= 0
+- mtl
 
 library:
   source-dirs: src

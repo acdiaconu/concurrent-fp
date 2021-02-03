@@ -4,37 +4,50 @@ import Parsing
 import FunSyntax
 import FunParser
 import Environment
-import Memory
+import CState
 
 import Control.Monad
 import Control.Monad.CC
+import Control.Monad.Trans
 
 import Debug.Trace
 
 -- State monad
+-- TODO: A more algebraic approach, to allow easy combination of ``pure"
+--       algebraic effects (i.e. create a class for state as a first step)
 
--- newtype State s a = State { runState :: s -> (a, s) }  
+newtype State s a = State { runState :: s -> (a, s) }
 
--- instance Monad (State s) where
---   return a = State $ \s -> (a, s)
---   (State sm) >>= f = State $ \s -> let (a, newS) = sm s
---                                        (State rs) = f a 
---                                    in newS rs
+instance Monad (State s) where
+  return a = State $ \s -> (a, s)
+  (State sm) >>= f = State $ \s -> let (a, newS) = sm s
+                                       (State rs) = f a 
+                                   in rs newS
 
--- new :: State Location
--- new (mem, res) (Cont kx) (Cont ks) = let (a, mem') = fresh mem in ks a (mem', res)
+instance Functor (State s) where
+  fmap f (State m) = State $ \s -> let (a, newS) = m s
+                                    in (f a, newS)
 
--- get :: Location -> State (CState Env Value (Cont Value))
--- get a (mem, resume) (Cont kx) (Cont ks) = ks (contents mem a) (mem, resume)
+instance Applicative (State s) where
+  pure = return
 
--- put :: Location -> CState Env Value (Cont Value) -> M ()
--- put a v (mem, resume) (Cont kx) (Cont ks) = ks () (update (mem, resume) a v)
+-- Ops
+
+get :: Location -> State (ChanState i) (CType i)
+get l = State $ \chs -> (contents chs l, chs)
+
+put :: Location -> CType i -> State (ChanState i) ()
+put l ct = State $ \chs -> ((), update chs l ct)
+
+new :: State (ChanState i) Location
+new = State $ \chs -> let (l, chs') = fresh chs in (l, chs')
 
 -- SEMANTIC DOMAINS
 
 type Env i = Environment (Value i)
-type Chs i = ChansState (Value i)
+type CState i = ChanState (Value i)
 
+-- add two more for specific intrerrupts
 data Value i = 
     Unit
   | IntVal Integer
@@ -44,7 +57,7 @@ data Value i =
   | WaitRecvVal (Value i)
   | WaitSendVal (Value i) (Value i)
   | Exception (Value i)
-  | Suspended (CC i (Value i))
+  | Intrerrupt (CCT i (State (ChanState i)) (Value i))
 
 -- -- AUXILIARY FUNCTIONS ON VALUES
 
@@ -62,7 +75,7 @@ instance Show (Value i) where
 
 -- EVALUATOR
 
-eval :: Expr -> Env i -> Prompt i (Value i) -> CC i (Value i)
+eval :: Expr -> Env i -> Prompt i (Value i) -> CCT i (State (ChanState i)) (Value i)
 eval (Number n) _ _ = trace ("number" ++ show n) (return (IntVal n))
 
 eval (Variable v) env _ = return (find env v)
@@ -86,7 +99,7 @@ eval (Let d e1) env p =
 eval (Pipe e1 e2) env p = 
   eval e1 env p >>= (\_ -> eval e2 env p)
 
-eval Stop env p = (shift p $ \k -> (return (Suspended $ k (return Unit))))
+eval Stop env p = shift p $ \k -> return (Intrerrupt $ k (return Unit))
 
 eval (Parallel es) env p = reset $ \outer -> 
                              interleave (map (\e -> reset $ \each -> (eval e env each)) es) outer
@@ -95,8 +108,8 @@ eval (Throw th) env p = eval th env p >>= (\v -> (shift p (\k -> (return $ Excep
 
   -- | Send Expr Expr
   -- | Receive Expr
-  -- | Stop
-  -- | NewChan  
+
+eval NewChan env p = lift (new >>= (\l -> put l Empty >>= (\() -> return $ ChanHandler l)))
 
 eval (TryCatch es ef) env p = eval es env p >>= 
                                 (\v -> (case v of
@@ -104,14 +117,7 @@ eval (TryCatch es ef) env p = eval es env p >>=
                                                   eval body (define env' x v) p))
                                   _           -> return v))
 
-interleave :: [CC i (Value i)] -> Prompt i (Value i) -> CC i (Value i) 
-interleave [] _ = return Unit 
-interleave (k:ks) outer = k >>= (\v -> case v of 
-    Suspended k -> interleave (ks ++ [k]) outer
-    Exception e -> abort outer (return $ Exception e)
-    _           -> interleave ks outer)
-
-elab :: Defn -> Env i -> Prompt i (Value i) -> CC i (Env i)
+elab :: Defn -> Env i -> Prompt i (Value i) -> CCT i (State (ChanState i)) (Env i)
 elab (Val x e) env p = 
   eval e env p >>= (\v -> return (define env x v))
 elab (Rec x e) env p =
@@ -121,7 +127,17 @@ elab (Rec x e) env p =
     _ ->
       error "RHS of letrec must be a lambda"
 
--- -- INITIAL ENVIRONMENT
+-- add waiting read and waiting write as cases
+-- change return type to ... [Value i]
+-- probably attach indices for all
+interleave :: [CCT i (State (ChanState i)) (Value i)] -> Prompt i (Value i) -> CCT i (State (ChanState i)) (Value i) 
+interleave [] _ = return Unit 
+interleave (k:ks) outer = k >>= (\v -> case v of 
+    Intrerrupt k -> interleave (ks ++ [k]) outer
+    Exception e -> abort outer (return $ Exception e)
+    _           -> interleave ks outer)
+
+-- INITIAL ENVIRONMENT
 
 -- init_env :: Env
 -- init_env =
@@ -155,7 +171,7 @@ elab (Rec x e) env p =
 
 -- -- MAIN PROGRAM
 
-type ProgState i = (Env i, Chs)
+type ProgState i = (Env i, ChanState i)
 type Answer i = (String, ProgState i)
 
 -- obey :: Phrase -> ProgState i -> (String, ProgState i)
