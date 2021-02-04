@@ -47,17 +47,16 @@ new = State $ \chs -> let (l, chs') = fresh chs in (l, chs')
 type Env i = Environment (Value i)
 type CState i = ChanState (Value i)
 
--- add two more for specific intrerrupts
 data Value i = 
     Unit
   | IntVal Integer
   | BoolVal Bool
   | ChanHandler Location
   | Closure String (Env i) Expr
-  | WaitRecvVal (Value i)
-  | WaitSendVal (Value i) (Value i)
+  | Waiting -- waiting read or write
   | Exception (Value i)
   | Intrerrupt (CCT i (State (ChanState i)) (Value i))
+  -- | Resume (CCT i (State (ChanState i)) (Value i))
 
 -- -- AUXILIARY FUNCTIONS ON VALUES
 
@@ -101,13 +100,25 @@ eval (Pipe e1 e2) env p =
 
 eval Stop env p = shift p $ \k -> return (Intrerrupt $ k (return Unit))
 
+eval (Send ce ve) env p = eval ce env p >>= (\(ChanHandler l) -> 
+                            eval ve env p >>= (\v -> 
+                              shift p $ \k -> 
+                              lift $ get l >>= (\cst -> case cst of 
+                                  Empty  -> put l (WR v (Intrerrupt $ k (return Unit))) >>= (\() -> (return Waiting))
+                                  WR _ _ -> error "not allowed"
+                          )))
+
+-- eval (Receive ce) env p = shift p $ \k ->
+--                           eval ce env p >>= (\(ChanHandler l) -> 
+--                             eval ve env p >>= (\v -> 
+--                               lift $ get l >>= (\cst -> case cst of 
+--                                   Empty -> put l (WR v (Intrerrupt $ k (return Unit))) >>= (\() -> return Unit)
+--                           )))
+
 eval (Parallel es) env p = reset $ \outer -> 
                              interleave (map (\e -> reset $ \each -> (eval e env each)) es) outer
 
 eval (Throw th) env p = eval th env p >>= (\v -> (shift p (\k -> (return $ Exception v))))
-
-  -- | Send Expr Expr
-  -- | Receive Expr
 
 eval NewChan env p = lift (new >>= (\l -> put l Empty >>= (\() -> return $ ChanHandler l)))
 
@@ -127,9 +138,6 @@ elab (Rec x e) env p =
     _ ->
       error "RHS of letrec must be a lambda"
 
--- add waiting read and waiting write as cases
--- change return type to ... [Value i]
--- probably attach indices for all
 interleave :: [CCT i (State (ChanState i)) (Value i)] -> Prompt i (Value i) -> CCT i (State (ChanState i)) (Value i) 
 interleave [] _ = return Unit 
 interleave (k:ks) outer = k >>= (\v -> case v of 
