@@ -1,4 +1,4 @@
-module Interpreter(dialog, init_mem, empty_env, funParser) where
+module Interpreter(dialog, init_mem, empty_env, funParser, obey) where
 
 import Parsing
 import FunSyntax
@@ -7,8 +7,8 @@ import Environment
 import CState
 
 import Control.Monad
-import Control.Monad.CC
 import Control.Monad.Trans
+import CCExc
 
 import Debug.Trace
 
@@ -42,108 +42,114 @@ put l ct = State $ \chs -> ((), update chs l ct)
 new :: State (ChanState i) Location
 new = State $ \chs -> let (l, chs') = fresh chs in (l, chs')
 
--- SEMANTIC DOMAINS
+rState comp init = (runState comp) init
 
-type Env i = Environment (Value i)
-type CState i = ChanState (Value i)
+-- Helper Types
 
-data Value i = 
+type Env = Environment Value
+type CST = ChanState Value
+type PromptCX = P2 Value Value
+type Responses = [Value]
+type SuspendedComputation = CC PromptCX (State CST) Value
+
+-- Value domain
+
+data Value =
     Unit
   | IntVal Integer
   | BoolVal Bool
   | ChanHandler Location
-  | Closure String (Env i) Expr
-  | Waiting -- waiting read or write
-  | Exception (Value i)
-  | Intrerrupt (CCT i (State (ChanState i)) (Value i))
-  -- | Resume (CCT i (State (ChanState i)) (Value i))
+  | Closure String Env Expr
+  | Waiting                         -- waiting read or write
+  | Exception Value
+  | Intrerrupt SuspendedComputation -- delimC computation that was halted
 
 -- -- AUXILIARY FUNCTIONS ON VALUES
 
-instance Eq (Value i) where
+instance Eq Value where
   IntVal a == IntVal b = a == b
   BoolVal a == BoolVal b = a == b
   _ == _ = False
 
-instance Show (Value i) where
+instance Show Value where
   show (IntVal n) = show n
   show (BoolVal b) = if b then "true" else "false"
   show (ChanHandler a) = "<chan handler " ++ show a ++ ">"
   show (Closure _ _ _) = "<closure>"
   show (Exception v ) = "<exception -> " ++ show v ++ ">"
 
--- EVALUATOR
+-- Evaluator
 
-eval :: Expr -> Env i -> Prompt i (Value i) -> CCT i (State (ChanState i)) (Value i)
-eval (Number n) _ _ = trace ("number" ++ show n) (return (IntVal n))
+eval :: Expr -> Env -> CC PromptCX (State CST) Value
+eval (Number n) _ = trace ("number" ++ show n) (return (IntVal n))
 
-eval (Variable v) env _ = return (find env v)
+eval (Variable v) env = return (find env v)
 
-eval (Apply f e) env p = 
-  eval f env p >>= (\ (Closure id env' body) ->
-    eval e env p >>= (\ v -> eval body (define env' id v) p))
+eval (Apply f e) env = 
+  eval f env >>= (\ (Closure id env' body) ->
+    eval e env >>= (\ v -> eval body (define env' id v)))
 
-eval (If e1 e2 e3) env p =
-  eval e1 env p >>= (\b ->
+eval (If e1 e2 e3) env =
+  eval e1 env >>= (\b ->
     case b of
-      BoolVal True -> eval e2 env p
-      BoolVal False -> eval e3 env p
+      BoolVal True -> eval e2 env
+      BoolVal False -> eval e3 env
       _ -> error "boolean required in conditional")
 
-eval (Lambda x e1) env _ = return $ Closure x env e1
+eval (Lambda x e1) env = return $ Closure x env e1
 
-eval (Let d e1) env p =
-  elab d env p >>= (\env' -> eval e1 env' p)
+eval (Let d e1) env =
+  elab d env >>= (\env' -> eval e1 env')
 
-eval (Pipe e1 e2) env p = 
-  eval e1 env p >>= (\_ -> eval e2 env p)
+eval (Pipe e1 e2) env = 
+  eval e1 env >>= (\_ -> eval e2 env)
 
-eval Stop env p = shift p $ \k -> return (Intrerrupt $ k (return Unit))
+eval Stop env = shiftP p2L $ \k -> return (Intrerrupt $ k Unit)
 
-eval (Send ce ve) env p = eval ce env p >>= (\(ChanHandler l) -> 
-                            eval ve env p >>= (\v -> 
-                              shift p $ \k -> 
-                              lift $ get l >>= (\cst -> case cst of 
-                                  Empty  -> put l (WR v (Intrerrupt $ k (return Unit))) >>= (\() -> (return Waiting))
-                                  WR _ _ -> error "not allowed"
-                          )))
+eval (Send ce ve) env = eval ce env >>= (\(ChanHandler l) -> 
+                          eval ve env >>= (\v -> 
+                            shiftP p2L $ \k -> 
+                            lift $ get l >>= (\cst -> case cst of 
+                                Empty  -> put l (WR v $ Intrerrupt (k Unit)) >>= (\() -> (return Waiting))
+                                WR _ _ -> error "not allowed"
+                        )))
 
--- eval (Receive ce) env p = shift p $ \k ->
---                           eval ce env p >>= (\(ChanHandler l) -> 
---                             eval ve env p >>= (\v -> 
---                               lift $ get l >>= (\cst -> case cst of 
---                                   Empty -> put l (WR v (Intrerrupt $ k (return Unit))) >>= (\() -> return Unit)
---                           )))
+eval (Receive ce) env = eval ce env >>= (\(ChanHandler l) -> 
+                          shiftP p2L $ \k -> 
+                          lift $ get l >>= (\cst -> case cst of 
+                              Empty  -> put l (WW $ Intrerrupt (k Unit)) >>= (\() -> (return Waiting))
+                              WR _ _ -> error "not allowed"
+                        ))
 
-eval (Parallel es) env p = reset $ \outer -> 
-                             interleave (map (\e -> reset $ \each -> (eval e env each)) es) outer
+eval (Parallel es) env = pushPrompt p2R $ 
+                           interleave (map (\e -> pushPrompt p2L (eval e env)) es)
 
-eval (Throw th) env p = eval th env p >>= (\v -> (shift p (\k -> (return $ Exception v))))
+eval (Throw th) env = eval th env >>= (\v -> (shiftP p2R (\k -> (return $ Exception v))))
 
-eval NewChan env p = lift (new >>= (\l -> put l Empty >>= (\() -> return $ ChanHandler l)))
+eval NewChan env = lift (new >>= (\l -> put l Empty >>= (\() -> return $ ChanHandler l)))
 
-eval (TryCatch es ef) env p = eval es env p >>= 
+eval (TryCatch es ef) env = eval es env >>= 
                                 (\v -> (case v of
-                                  Exception e -> (eval ef env p >>= (\(Closure x env' body) -> 
-                                                  eval body (define env' x v) p))
+                                  Exception e -> (eval ef env >>= (\(Closure x env' body) -> 
+                                                  eval body (define env' x v)))
                                   _           -> return v))
 
-elab :: Defn -> Env i -> Prompt i (Value i) -> CCT i (State (ChanState i)) (Env i)
-elab (Val x e) env p = 
-  eval e env p >>= (\v -> return (define env x v))
-elab (Rec x e) env p =
+elab :: Defn -> Env -> CC PromptCX (State CST) Env
+elab (Val x e) env = 
+  eval e env >>= (\v -> return (define env x v))
+elab (Rec x e) env =
   case e of
     Lambda fp body ->
       return env' where env' = define env x (Closure fp env' body)
     _ ->
       error "RHS of letrec must be a lambda"
 
-interleave :: [CCT i (State (ChanState i)) (Value i)] -> Prompt i (Value i) -> CCT i (State (ChanState i)) (Value i) 
-interleave [] _ = return Unit 
-interleave (k:ks) outer = k >>= (\v -> case v of 
-    Intrerrupt k -> interleave (ks ++ [k]) outer
-    Exception e -> abort outer (return $ Exception e)
-    _           -> interleave ks outer)
+interleave :: [CC PromptCX (State CST) Value] -> CC PromptCX (State CST) Value
+interleave [] = return Unit 
+interleave (k:ks) = k >>= (\v -> case v of 
+    Intrerrupt k -> interleave (ks ++ [k])
+    Exception e -> abortP p2R (return $ Exception e)
+    _           -> interleave ks)
 
 -- INITIAL ENVIRONMENT
 
@@ -179,17 +185,16 @@ interleave (k:ks) outer = k >>= (\v -> case v of
 
 -- -- MAIN PROGRAM
 
-type ProgState i = (Env i, ChanState i)
-type Answer i = (String, ProgState i)
+type ProgState = (Env, CST)
 
--- obey :: Phrase -> ProgState i -> (String, ProgState i)
--- obey _ p = ("done", p)
--- obey (Calculate exp) (env, mem) =
---   eval exp env mem
---     (Cont $ \ () mem' -> ("***exit in main program***", (env, mem')))
---     (Cont $ \ v mem' -> (print_value v, (env, mem')))
--- obey (Define def) (env, mem) =
---   let x = def_lhs def in
---   elab def env mem
---     (Cont $ \ () mem' -> ("***exit in definition***", (env, mem')))
---     (Cont $ \ env' mem' -> (print_defn env' x, (env', mem')))
+obey :: Phrase -> ProgState -> (String, ProgState)
+obey (Calculate exp) (env, mem) =
+  let (v, mem') = rState (runCC $ eval ex env) mem in (show v, (env, mem'))
+  where 
+    ex = TryCatch (Parallel [Pipe (Pipe (Stop) (Throw (Number 5))) (Number 42), 
+                                 Pipe (Pipe (Number 2) ex') (Number 6)]) 
+             (Lambda "x" (Number 52))
+    ex' = Parallel [TryCatch (Parallel [Pipe (Stop) (Number 6), Pipe (Pipe (Number 5) (Throw (Number 10))) (Number 6969)]) (Lambda "x" (Number 52)), Number 50] 
+obey (Define def) (env, mem) =
+  let x = def_lhs def in
+  let (env', mem') = rState (runCC $ elab def env) mem in (print_defn env' x, (env', mem'))

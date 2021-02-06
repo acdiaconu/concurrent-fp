@@ -11,8 +11,8 @@ instance Show Location where show (Loc u) = show u
 -- and you cant get the contents of an uninitialised location.
 
 data CType v = Empty 
-             | WR v v
-             | WW v
+               | WR v v
+               | WW v 
 
 newtype ChanState v = Mem (Integer, Map.Map Integer (CType v))
 

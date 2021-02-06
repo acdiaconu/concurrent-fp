@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: f1e7559524ba037d9691ff4feea2d00033a5cbe491cdd79f7af956fe4a0e6c2a
+-- hash: f4ff21b46c675c6877d61b3b22315c80340d60194662a4098615d2a4b270cb96
 
 name:           lang
 version:        0.1.0.0
@@ -27,6 +27,7 @@ source-repository head
 
 library
   exposed-modules:
+      CCExc
       CState
       Environment
       FunParser
