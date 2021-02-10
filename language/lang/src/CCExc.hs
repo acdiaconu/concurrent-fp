@@ -1,6 +1,10 @@
 {-# LANGUAGE PatternGuards, KindSignatures #-}
 {-# LANGUAGE ExistentialQuantification, Rank2Types, ImpredicativeTypes #-}
 
+-- Implementation courtesy of Oleg Kiselyov. 
+-- https://mail.haskell.org/pipermail/haskell/2010-September/022282.html
+-- Below is Oleg's description of the library.
+
 -- Monad transformer for multi-prompt delimited control
 -- It implements the superset of the interface described in
 --

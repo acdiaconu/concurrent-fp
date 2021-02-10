@@ -1,7 +1,9 @@
 {-# OPTIONS_GHC -fno-warn-tabs #-}
 module FunSyntax where
 
-import Environment
+import Types
+
+type Ident = String
 
 data Phrase =
     Calculate Expr
@@ -19,8 +21,8 @@ data Expr =
   | Parallel [Expr]
   | Send Expr Expr
   | Receive Expr
-  | Stop
   | NewChan   
+  | Close Expr
   | TryCatch Expr Expr
   | Throw Expr
   deriving Show
@@ -29,8 +31,6 @@ data Defn =
     Val Ident Expr           
   | Rec Ident Expr           
   deriving Show
-
-type Ident = String
 
 def_lhs (Val x e) = x
 def_lhs (Rec x e) = x

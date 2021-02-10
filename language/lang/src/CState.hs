@@ -1,44 +1,35 @@
-module CState(Location, ChanState, CType(..), init_mem, contents, update, fresh) where
+module CState(
+  Location, ChanState, CType(..),    -- types
+  empty_cst, contents, update, fresh  -- operations
+) where
 
 import qualified Data.Map as Map
 
 newtype Location = Loc Integer deriving Eq
 
-instance Show Location where show (Loc u) = show u
+instance Show Location where 
+  show (Loc u) = show u
 
--- Invalid locations can be non-existent, or they can exist 
--- but be uninitialised.  You can't update a non-existent location,
--- and you cant get the contents of an uninitialised location.
+data CType v k = Empty 
+               | WR v (v -> k)
+               | WW (v -> k) 
 
-data CType v = Empty 
-               | WR v v
-               | WW v 
+newtype ChanState v k = Mem (Integer, Map.Map Integer (CType v k))
 
-newtype ChanState v = Mem (Integer, Map.Map Integer (CType v))
+empty_cst :: ChanState v k
+empty_cst = Mem (0, Map.empty)
 
-init_mem :: ChanState v
-init_mem = Mem (0, Map.empty)
-
-contents :: ChanState v -> Location -> CType v
+contents :: ChanState v k -> Location -> CType v k
 contents (Mem (n, s)) (Loc u) = 
   case Map.lookup u s of
     Just chs -> chs
     Nothing -> error ("non-existent location " ++ show u)
 
-update :: ChanState v -> Location -> CType v -> ChanState v
+update :: ChanState v k -> Location -> CType v k -> ChanState v k
 update (Mem (n, s)) (Loc u) chs = 
   case Map.lookup u s of
     Just _ -> Mem (n, Map.insert u chs s)
     Nothing -> error ("non-existent location " ++ show u)
 
-fresh :: ChanState v -> (Location, ChanState v)
+fresh :: ChanState v k -> (Location, ChanState v k)
 fresh (Mem (n, s)) = (Loc n, Mem (n+1, Map.insert n Empty s))
-
--- array :: Memory e v k -> Integer -> (Location, Memory a)
--- array (Mem (n, s)) k = (Loc n, Mem (n+k, s))
-
--- index :: Memory e v k -> Location -> Integer -> Location
--- index mem (Loc a) i = Loc (a+i)
-
--- dump :: Show a => Memory e v k -> String
--- dump (Mem (n, s)) = show (Map.toList s)

@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: f4ff21b46c675c6877d61b3b22315c80340d60194662a4098615d2a4b270cb96
+-- hash: aecc36f36cd75effbc730527e8b517b4dc6e00effde7421d396f08ed48559295
 
 name:           lang
 version:        0.1.0.0
@@ -34,6 +34,7 @@ library
       FunSyntax
       Interpreter
       Parsing
+      Types
   other-modules:
       Paths_lang
   hs-source-dirs:
