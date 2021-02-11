@@ -60,6 +60,8 @@ newtype CST = CST (ChanState Value Suspended)
 type Suspended = CC PromptCX (State CST) Value
 type PromptCX = P2 Value Value
 type ProgState = (Env, CST)
+type Arg = String
+type Name = String
 
 init_cst = CST empty_cst
 init_env = empty_env
@@ -71,7 +73,11 @@ data Value =
   | IntVal Integer
   | BoolVal Bool
   | ChanHandler Location
-  | Closure String Env Expr
+  
+  | Closure Arg Env Expr
+  | Injection String [Value]    -- Expr here is a closure, representing the 
+                                -- injection
+
   | Response [Value]
   | Waiting                    
   | Exception Value
@@ -92,6 +98,7 @@ instance Show Value where
   show (Exception v ) = "<exception -> " ++ show v ++ ">"
   show (Response vs) = "(" ++ intercalate "," (map show vs) ++ ")"
   show Unit = "unit"
+  show (Injection name vs) = name ++ " " ++ intercalate " " (map show vs)
 
 -- Evaluator
 
@@ -112,6 +119,10 @@ eval (If e1 e2 e3) env =
       _ -> error "boolean required in conditional")
 
 eval (Lambda x e1) env = return $ Closure x env e1
+
+eval (Injector name args) env = values evs >>= (\vs -> 
+  return $ Injection name vs)
+  where evs = map (`eval` env) args
 
 eval (Let d e1) env =
   elab d env >>= (\env' -> eval e1 env')
@@ -161,7 +172,7 @@ eval (TryCatch es ef) env =
       _           -> return v))
 
 elab :: Defn -> Env -> CC PromptCX (State CST) Env
-elab (Val x e) env = 
+elab (Val x e) env =
   eval e env >>= (\v -> return (define env x v))
 elab (Rec x e) env =
   case e of
@@ -169,6 +180,7 @@ elab (Rec x e) env =
       return env' where env' = define env x (Closure fp env' body)
     _ ->
       error "RHS of letrec must be a lambda"
+elab (Data _ ctors) env = foldM (\env' cdef -> elab cdef env') env ctors
 
 interleave :: [CC PromptCX (State CST) Value] -> [Value] -> Int ->
               CC PromptCX (State CST) Value
@@ -184,6 +196,8 @@ interleave (k:ks) rs w = k >>= (\v -> case v of
     v            -> interleave ks (v:rs) w
   )
 
+values [] = return []
+values (c:cvs) = c >>= (\v -> values cvs >>= (\vs -> return (v:vs)))
 
 -- Initial environment
 
@@ -231,4 +245,4 @@ obey (Calculate exp) (env, mem) =
 obey (Define def) (env, mem) =
   let x = def_lhs def in
   let (env', mem') = runS (runCC $ elab def env) mem in 
-  (print_defn env' x, (env', mem'))
+  ({-print_defn env' x-}"", (env', mem'))

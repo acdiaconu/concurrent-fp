@@ -9,7 +9,7 @@ data Token =
     IDENT IdKind Ident | NUMBER Integer | STRING String
   | LPAR | RPAR | COMMA | EQUAL | ASSIGN | SEMI | SSEMI
   | IF | THEN | ELSE | LET | REC | VAL | LAMBDA | IN | WHILE | DO
-  | PIPE | MINUS | STAR | AMPER | ARRAY | BRA | KET 
+  | PIPE | MINUS | STAR | AMPER | ARRAY | BRA | KET | DATA
   | LBRACE | RBRACE | ARROW | VBAR | DOT | OPEN | PAR | SEND | RECV | NEWCH
   | BADTOK Char
   deriving Eq
@@ -31,7 +31,7 @@ instance Show Token where
       MINUS -> "-"; STAR -> "*"; AMPER -> "&"; ARRAY -> "array"
       BRA -> "["; KET -> "]"; LBRACE -> "{"; RBRACE -> "}"
       ARROW -> "=>"; VBAR -> "|"; DOT -> "."; OPEN -> "open"; PAR -> "||"
-      SEND -> "!"; RECV -> "?"; NEWCH -> "newChan"
+      SEND -> "!"; RECV -> "?"; NEWCH -> "newChan"; DATA -> "data"
       BADTOK c -> [c]
 
 kwlookup = 
@@ -39,7 +39,8 @@ kwlookup =
     [("if", IF), ("then", THEN), ("else", ELSE), ("let", LET), ("in", IN),
       ("rec", REC), ("val", VAL), ("lambda", LAMBDA), ("while", WHILE), 
       ("do", DO), ("array", ARRAY), ("open", OPEN),
-      ("div", IDENT MULOP "div"), ("mod", IDENT MULOP "mod"), ("newChan", NEWCH)]
+      ("div", IDENT MULOP "div"), ("mod", IDENT MULOP "mod"), 
+      ("newChan", NEWCH), ("data", DATA)]
 
 lexer =
   do 
@@ -100,12 +101,20 @@ p_phrase =
 p_def = 
   do eat VAL; (x, e) <- p_eqn; return (Val x e)
   <+> do eat REC; (x, e) <- p_eqn; return (Rec x e)
+  <+> do eat DATA; (x, ctors) <- p_seqdef; return (Data x ctors) 
 
 -- {\syn _eqn_ \arrow\ _name_ "=" _expr_ \orr\ _name_ _formals_ "=" _expr_}
 p_eqn =
   do x <- p_name; eat EQUAL; e <- p_expr; return (x, e)
-  <+> do x <- p_name; xs <- p_formals; 
-		eat EQUAL; e <- p_expr; return (x, nested_lam xs e)
+  <+> do x <- p_name; xs <- p_formals; eat EQUAL; e <- p_expr; return (x, nested_lam xs e)
+
+p_seqdef = do x <- p_name; xs <- p_formals; eat EQUAL; ctors <- p_seq p_ctor; return (x, ctors)
+
+p_ctor = 
+  do x <- p_name; xs <- p_formals; eat VBAR; let args = genArgs (length xs) in return (Val x (nested_lam args (Injector x (map Variable args))))
+  <+> do x <- p_name; xs <- p_formals; let args = genArgs (length xs) in return (Val x (nested_lam args (Injector x (map Variable args))))
+
+genArgs n = take n (map (\n -> "x" ++ show n) [1 ..]) 
 
 nested_lam :: [Ident] -> Expr -> Expr
 nested_lam [x] e = Lambda x e

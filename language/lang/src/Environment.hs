@@ -30,3 +30,10 @@ names (Env m) = Map.keys m
 
 within :: Environment v -> Environment v -> Environment v
 within (Env m1) (Env m2) = Env (Map.union m2 m1)
+
+defargs :: Environment v -> [Ident] -> [v] -> Environment v
+defargs env fps args =
+  if length args == length fps then
+    foldl (\ env' (x, v) -> define env' x v) env (zip fps args)
+  else
+    error "wrong number of args"
