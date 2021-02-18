@@ -63,8 +63,8 @@ type ProgState = (Env, CST)
 type Arg = String
 type Name = String
 
-init_cst = CST empty_cst
-init_env = empty_env
+init_cst = CST empty_cst  -- initial empty channel state
+init_env = empty_env      -- initial empty environment
 
 -- Value domain
 
@@ -73,17 +73,14 @@ data Value =
   | IntVal Integer
   | BoolVal Bool
   | ChanHandler Location
-  
   | Closure Arg Env Expr
-  | Injection String [Value]    -- Expr here is a closure, representing the 
-                                -- injection
-
-  | Response [Value]
+  | Injection String [Value]    
+  | Tuple [Value]
   | Waiting                    
   | Exception Value
-  | Resume Suspended Suspended  -- resume a write and a read both
+  | Resume Suspended Suspended  -- resume a write and a read
 
--- -- AUXILIARY FUNCTIONS ON VALUES
+-- Some useful instances
 
 instance Eq Value where
   IntVal a == IntVal b = a == b
@@ -96,7 +93,7 @@ instance Show Value where
   show (ChanHandler a) = "<chan handler " ++ show a ++ ">"
   show (Closure _ _ _) = "<closure>"
   show (Exception v ) = "<exception -> " ++ show v ++ ">"
-  show (Response vs) = "(" ++ intercalate "," (map show vs) ++ ")"
+  show (Tuple vs) = "(" ++ intercalate "," (map show vs) ++ ")"
   show Unit = "unit"
   show (Injection name vs) = name ++ " " ++ intercalate " " (map show vs)
 
@@ -124,6 +121,14 @@ eval (Injector name args) env = values evs >>= (\vs ->
   return $ Injection name vs)
   where evs = map (`eval` env) args
 
+eval (Match ex []) env = return $ Exception Unit
+eval (Match ex ((Pattern patCtor pex):pats)) env = 
+  eval ex env >>= (\ inj -> 
+    case trydefine patCtor inj env of
+      Just env' -> eval pex env'
+      Nothing -> eval (Match ex pats) env
+  )
+
 eval (Let d e1) env =
   elab d env >>= (\env' -> eval e1 env')
 
@@ -135,8 +140,7 @@ eval (Send ce ve) env =
     eval ve env >>= (\v -> 
       shiftP p2L $ \sk -> 
       lift $ get l >>= (\ cst -> case cst of 
-          Empty   -> put l (WR v $ sk) >>= (\() -> 
-                       return Waiting)
+          Empty   -> put l (WR v $ sk) >>= (\() -> return Waiting)
           WW rk   -> put l Empty >>= (\() -> return $ Resume (rk v) (sk Unit))
           WR _ _  -> error "not allowed"
   )))
@@ -146,8 +150,7 @@ eval (Receive ce) env =
     (\(ChanHandler l) -> 
       shiftP p2L $ \rk -> 
       lift $ get l >>= (\ cst -> case cst of 
-          Empty   -> put l (WW $ rk) >>= (\() -> 
-                       return Waiting)
+          Empty   -> put l (WW $ rk) >>= (\() -> return Waiting)
           WR v sk -> put l Empty >>= (\() -> return $ Resume (sk Unit) (rk v))
           WW _    -> error "not allowed"
     ))
@@ -185,9 +188,8 @@ elab (Data _ ctors) env = foldM (\env' cdef -> elab cdef env') env ctors
 interleave :: [CC PromptCX (State CST) Value] -> [Value] -> Int ->
               CC PromptCX (State CST) Value
 interleave [] rs w = if w == 0 
-                     then return (Response rs)
+                     then return (Tuple rs)
                      else error "detected deadlock" 
-
 interleave (k:ks) rs w = k >>= (\v -> case v of 
     Exception e  -> abortP p2R (return $ Exception e)
     Resume k1 k2 -> interleave ((k1:ks) ++ [k2]) rs (w - 1)
@@ -199,12 +201,16 @@ interleave (k:ks) rs w = k >>= (\v -> case v of
 values [] = return []
 values (c:cvs) = c >>= (\v -> values cvs >>= (\vs -> return (v:vs)))
 
--- Initial environment
+trydefine (VarCtor n vars) (Injection n' vals) env =
+  if n == n'
+  then Just $ defargs env vars vals
+  else Nothing
+
+-- Initial environment, TODO
 
 -- init_env :: Env
 -- init_env =
---   make_env [constant "nil" Nil, 
---     constant "true" (BoolVal True), constant "false" (BoolVal False),
+--   make_env [ constant "true" (BoolVal True), constant "false" (BoolVal False),
 --     pureprim "+" (\ (IntVal a) -> Function (\(IntVal b) -> result $ IntVal (a + b)))]
 --     -- pureprim "-" (\ (IntVal a) (IntVal b) -> IntVal (a - b)),
 --     -- pureprim "*" (\ (IntVal a) (IntVal b) -> IntVal (a * b)),
@@ -234,10 +240,10 @@ values (c:cvs) = c >>= (\v -> values cvs >>= (\vs -> return (v:vs)))
 -- -- MAIN PROGRAM
 
 -- Deal with top-state exprs and defs
--- Observe the super nice compositionality here how we uncover each layer 
+
+-- Observe the super nice compositionality, how we uncover each layer 
 -- independently.
--- This might actually be what Filinski hinted at in his monadic reflection 
--- paper he was saying that 
+-- This might actually be what Filinski hinted at in his monadic reflection.
 obey :: Phrase -> ProgState -> (String, ProgState)
 obey (Calculate exp) (env, mem) =
   let (v, mem') = runS (runCC $ eval exp env) mem in 

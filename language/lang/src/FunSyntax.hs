@@ -18,6 +18,7 @@ data Expr =
   | Lambda Ident Expr      
   | Injector String [Expr]
   | Let Defn Expr
+  | Match Expr [Pattern]
   | Pipe Expr Expr		      
   | Parallel [Expr]
   | Send Expr Expr
@@ -27,6 +28,10 @@ data Expr =
   | TryCatch Expr Expr
   | Throw Expr
   deriving Show
+
+data Pattern = Pattern VarCtor Expr deriving Show
+
+data VarCtor = VarCtor Ident [Ident] deriving Show
 
 data Defn =                  
     Val Ident Expr           

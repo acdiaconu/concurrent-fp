@@ -1,5 +1,5 @@
 module Environment(Environment, empty_env, find, maybe_find,
-                   define, make_env, names, within) where
+                   define, make_env, names, within, defargs) where
 
 import qualified Data.Map as Map
 
