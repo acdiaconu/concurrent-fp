@@ -15,7 +15,9 @@ data Expr =
   | Variable Ident          
   | Apply Expr Expr         
   | If Expr Expr Expr       
-  | Lambda Ident Expr      
+  | Lambda Ident Expr
+  | BinPrim BOP Expr Expr
+  | MonPrim MOP Expr
   | Injector String [Expr]
   | Let Defn Expr
   | Match Expr [Pattern]
@@ -28,6 +30,9 @@ data Expr =
   | TryCatch Expr Expr
   | Throw Expr
   deriving Show
+
+data BOP = Plus | Minus | Times | Div | Mod | Equal | And | Or deriving Show
+data MOP = Neg deriving Show
 
 data Pattern = Pattern VarCtor Expr deriving Show
 

@@ -13,7 +13,7 @@ data Token =
   | IF | THEN | ELSE | LET | REC | VAL | LAMBDA | IN | WHILE | DO
   | PIPE | MINUS | STAR | AMPER | ARRAY | BRA | KET | DATA | MATCH | WITH
   | LBRACE | RBRACE | ARROW | VBAR | DOT | OPEN | PAR | SEND | RECV | NEWCH
-  | BADTOK Char
+  | BADTOK Char | THROW | CLOSE
   deriving Eq
 
 data IdKind = 
@@ -28,21 +28,23 @@ instance Show Token where
       LPAR -> "("; RPAR -> ")"; COMMA -> ","
       EQUAL -> "="; SEMI -> ";"; SSEMI -> ";;"; ASSIGN -> ":="
       IF -> "if"; THEN -> "then"; ELSE -> "else"; LET -> "let"
-      REC -> "rec"; VAL -> "val"; LAMBDA -> "lambda"; IN -> "in"
+      REC -> "rec"; VAL -> "val"; LAMBDA -> "fun"; IN -> "in"
       WHILE -> "while"; DO -> "do"; PIPE -> ">>"
       MINUS -> "-"; STAR -> "*"; AMPER -> "&"; ARRAY -> "array"
       BRA -> "["; KET -> "]"; LBRACE -> "{"; RBRACE -> "}"
       ARROW -> "=>"; VBAR -> "|"; DOT -> "."; OPEN -> "open"; PAR -> "||"
       SEND -> "!"; RECV -> "?"; NEWCH -> "newChan"; DATA -> "data";
-      MATCH -> "match"; WITH -> "with"; BADTOK c -> [c]
+      MATCH -> "match"; WITH -> "with"; 
+      CLOSE -> "close"; THROW -> "throw"; BADTOK c -> [c]
 
 kwlookup = 
   make_kwlookup (IDENT ID)
     [("if", IF), ("then", THEN), ("else", ELSE), ("let", LET), ("in", IN),
-      ("rec", REC), ("val", VAL), ("lambda", LAMBDA), ("while", WHILE), 
+      ("rec", REC), ("val", VAL), ("fun", LAMBDA), ("while", WHILE), 
       ("do", DO), ("array", ARRAY), ("open", OPEN),
       ("div", IDENT MULOP "div"), ("mod", IDENT MULOP "mod"), 
-      ("newChan", NEWCH), ("data", DATA), ("match", MATCH), ("with", WITH)]
+      ("newChan", NEWCH), ("data", DATA), ("match", MATCH), ("with", WITH),
+      ("throw", THROW), ("close", CLOSE)]
 
 lexer =
   do 
@@ -108,6 +110,8 @@ p_eqn =
   <+> do x <- p_name; xs <- p_formals; eat EQUAL; e <- p_expr; 
          return (x, nested_lam xs e)
 
+-- TODO: add prefix for constructor to be data name
+
 p_seqdef = do x <- p_name; xs <- p_formals; eat EQUAL; 
               ctors <- p_seq $ p_ctor xs; 
               return (x, ctors)
@@ -167,8 +171,7 @@ p_term6 =
 
 p_term5 = p_opchainl p_relop p_term4 
 p_term4 = p_opchainl p_addop p_term3
-p_term3 = p_opchainl p_mulop p_term2
-p_term2 = p_opchainr (p_ident CONSOP) p_term1
+p_term3 = p_opchainl p_mulop p_term1
 
 p_relop = p_ident RELOP <+> (do eat EQUAL; return "=")
 p_addop = p_ident ADDOP <+> (do eat MINUS; return "-")
@@ -179,13 +182,17 @@ p_opchainl p_op p_rand =
   do e0 <- p_rand; p_tail e0
   where
     p_tail e1 =
-      do w <- p_op; e2 <- p_rand; p_tail (Apply (Apply (Variable w) e1) e2)
+      do w <- p_op; e2 <- p_rand; case w of 
+           "+"   -> p_tail (BinPrim Plus e1 e2)
+           "-"   -> p_tail (BinPrim Minus e1 e2)
+           "*"   -> p_tail (BinPrim Times e1 e2)
+           "div" -> p_tail (BinPrim Div e1 e2)
+           "mod" -> p_tail (BinPrim Mod e1 e2)
+           "="   -> p_tail (BinPrim Equal e1 e2)
+           "and" -> p_tail (BinPrim And e1 e2)
+           "or"  -> p_tail (BinPrim Or e1 e2)
+           _     -> p_tail (Apply (Apply (Variable w) e1) e2)
       <+> return e1
-
-p_opchainr :: Parser t Ident -> Parser t Expr -> Parser t Expr
-p_opchainr =
-  p_chainr mkop
-  where mkop w e1 e2 = Apply (Apply (Variable w) e1) e2
 
 p_chainl ::(a -> b -> b -> b) -> Parser t a -> Parser t b -> Parser t b
 p_chainl mk p_op p_rand = 
@@ -206,13 +213,15 @@ p_chainr mk p_op p_rand =
       <+> return e1
 
 p_term1 =
-  do w <- p_monop; e <- p_term1; return (Apply (Variable w) e)
+  do w <- p_monop; e <- p_term1; return (MonPrim w e)
   <+> do ce <- p_primary; eat RECV; return (Receive ce) 
   <+> do ce <- p_primary; eat SEND; ve <- p_primary; return (Send ce ve) 
   <+> do eat NEWCH; return NewChan 
+  <+> do eat CLOSE; e <- p_term1; return (Close e)
+  <+> do eat THROW; e <- p_term1; return (Throw e)
   <+> p_term0
 
-p_monop = p_ident MONOP <+> (do eat MINUS; return "~");
+p_monop = (do eat MINUS; return Neg);
 
 p_term0 =
   do e0 <- p_primary; p_qualifiers e0;
