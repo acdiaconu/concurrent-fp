@@ -129,7 +129,7 @@ eval (Injector name args) env = values evs >>= (\vs ->
   return $ Injection name vs)
   where evs = map (`eval` env) args
 
-eval (Match ex []) env = return $ Injection "MatchExc" []
+eval (Match ex []) env = return $ Injection "ExcMatch" []
 eval (Match ex ((Pattern patCtor pex):pats)) env = 
   eval ex env >>= (\ inj -> 
     case trydefine patCtor inj env of
@@ -152,8 +152,8 @@ eval (Send ce ve) env =
         WW rk   -> put l (Ready $ rk v) >>= (\() -> 
                      return $ Resume (sk Unit)
                    )
-        Closed  -> return (Injection "Closed" [])  -- built in exc
-        _       -> return (Injection "Invalid" []) -- built in exc
+        Closed  -> return (Injection "ExcClosed" [])  -- built in exc
+        _       -> return (Injection "ExcInvalid" []) -- built in exc
       )
     )
   )
@@ -167,8 +167,8 @@ eval (Receive ce) env =
           WR v sk -> put l (Ready $ sk Unit) >>= (\() -> 
                        return $ Resume (rk v)
                      )
-          Closed  -> return (Injection "Closed" [])  -- built in exc
-          _       -> return (Injection "Invalid" []) -- built in exc
+          Closed  -> return (Injection "ExcClosed" [])  -- built in exc
+          _       -> return (Injection "ExcInvalid" []) -- built in exc
     ))
 
 eval (Parallel es) env = 
@@ -272,9 +272,9 @@ init_env =
     ("false", BoolVal False),
     ("unit", Unit),
     -- some primitive constructors for the exc data
-    ("Closed", Closure "" empty_env (Injector "Closed" [])),
-    ("Invalid", Closure "" empty_env (Injector "Invalid" [])),
-    ("MatchExc", Closure "" empty_env (Injector "MatchExc" []))]
+    ("ExcClosed", Injection "ExcClosed" []),
+    ("ExcInvalid", Injection "ExcInvalid" []),
+    ("ExcMatch", Injection "ExcMatch" [])]
 
 init_cst :: CST
 init_cst = CST empty_cst  -- initial empty channel state
