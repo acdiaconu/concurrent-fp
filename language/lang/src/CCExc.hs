@@ -60,14 +60,13 @@ module CCExc (
 
               -- Useful derived operations
 	          abortP,
-              shiftP,
+              shift,
               shift0P,
               controlP,
 
               -- Pre-defined prompt flavors
 	      PS, ps,
-              P2, p2L, p2R,
-			  TP2, tp2L, tp2M, tp2R,
+              P2, pp, px,
               PP, pp,
               PM, pm,
               PD, newPrompt,
@@ -156,9 +155,9 @@ abortP :: Monad m =>
 	  Prompt p m w -> CC p m w -> CC p m any
 abortP p e = takeSubCont p (\_ -> e)
 
-shiftP :: Monad m => 
+shift :: Monad m => 
 	  Prompt p m w -> ((a -> CC p m w) -> CC p m w) -> CC p m a
-shiftP p f = takeSubCont p $ \sk -> 
+shift p f = takeSubCont p $ \sk -> 
 	       pushPrompt p (f (\c -> 
 		  pushPrompt p (pushSubCont sk (return c))))
 
@@ -200,15 +199,15 @@ newtype P2 w1 w2 m x =
   P2 (Either (CCT (P2 w1 w2) m x w1) (CCT (P2 w1 w2) m x w2))
 
 -- There are two generalized prompts of the flavor P2:
-p2L :: Prompt (P2 w1 w2) m w1
-p2L = (inj, prj)
+pp :: Prompt (P2 w1 w2) m w1
+pp = (inj, prj)
  where
  inj = P2 . Left
  prj (P2 (Left x)) = Just x
  prj _ = Nothing
 
-p2R :: Prompt (P2 w1 w2) m w2
-p2R = (inj, prj)
+px :: Prompt (P2 w1 w2) m w2
+px = (inj, prj)
  where
  inj = P2 . Right
  prj (P2 (Right x)) = Just x
@@ -225,8 +224,8 @@ data PP m x = forall w. Typeable w => PP (CCT PP m x w)
 -- be partially applied. But we can treat the type (NCCT p m a w) that way.
 newtype NCCT p m a w = NCCT{unNCCT :: CCT p m a w}
 
-pp :: Typeable w => Prompt PP m w
-pp = (inj, prj)
+ppp :: Typeable w => Prompt PP m w
+ppp = (inj, prj)
  where
  inj = PP
  prj (PP c) = maybe Nothing (Just . unNCCT) (gcast (NCCT c))
@@ -265,31 +264,3 @@ newPrompt mark = (inj, prj)
 -- is useful for that purpose.
 as_prompt_type :: Prompt p m w -> w -> Prompt p m w
 as_prompt_type = const
-
-
-data TEither a b c = TLeft a | TMiddle b | TRight c
-
-newtype TP2 w1 w2 w3 m x = 
-  TP2 (TEither (CCT (TP2 w1 w2 w3) m x w1) (CCT (TP2 w1 w2 w3) m x w2) (CCT (TP2 w1 w2 w3) m x w3))
-
--- There are two generalized prompts of the flavor P2:
-tp2L :: Prompt (TP2 w1 w2 w3) m w1
-tp2L = (inj, prj)
- where
- inj = TP2 . TLeft
- prj (TP2 (TLeft x)) = Just x
- prj _ = Nothing
-
-tp2M :: Prompt (TP2 w1 w2 w3) m w2
-tp2M = (inj, prj)
- where
- inj = TP2 . TMiddle
- prj (TP2 (TMiddle x)) = Just x
- prj _ = Nothing
-
-tp2R :: Prompt (TP2 w1 w2 w3) m w3
-tp2R = (inj, prj)
- where
- inj = TP2 . TRight
- prj (TP2 (TRight x)) = Just x
- prj _ = Nothing

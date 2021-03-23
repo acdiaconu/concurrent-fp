@@ -1,10 +1,37 @@
-((catch (x?) with ExcClosed => 23) || 2 || x!1);;
-catch ((x?)>>2423 || 2 || close x) with ExcClosed => 23;;
+---------- Miscs ----------
+
+val x = newChan ;;
 ((catch (x?) with ExcClosed => 23) || 2 || close x);;
 
+val x = newChan ;;
+(catch (x? || 2 || close x) with ExcClosed => 234);;
+
+((2||throw ExcClosed||4)||(2||3||throw ExcMatch));;
+
+val x = newChan ;;
+((x?) || 2 || close x);;
+
+val c = newChan ;;
 (if (c? >> c!5 >> c?) then 2 else 5  || 2 || c!2 >> c? >> c!false);;
 
 val x = newChan;;
 val y = newChan;;
 (close x >> y!2 || x? >> y? || 2);;
 (close x >> y!2 || (catch (x?) with ExcClosed => 23) >> y? || 2);;
+
+---------- Producer / Consumer ----------
+
+rec server c acc =
+catch 
+    server c (acc + c?)  
+with 
+    ExcClosed => acc ;;
+
+rec client c lim = 
+    if (lim = 1000)
+    then close c >> unit
+    else c!1 >> client c (lim + 1) ;;
+
+val main = 
+    let val c = newChan in 
+    client c 0 || server c 0 ;;

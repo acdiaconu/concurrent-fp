@@ -63,7 +63,7 @@ type Env = Environment Value
 newtype CST = CST (ChanState Value Suspended)
 
 type Suspended = CC PromptCX (State CST) Value
-type PromptCX = TP2 Value Value Value
+type PromptCX = P2 Value Value
 type ProgState = (Env, CST)
 type Arg = String
 type Name = String
@@ -105,20 +105,22 @@ instance Show Value where
   show Unit                = "unit"
   show (Injection name vs) = name ++ " " ++ intercalate " " (map show vs)
 
-  show (Waiting _)        = "waiting"
-  show (Halted _)         = "halted"
-  show (Resume _)         = "resume"
+  show (Waiting _)        = error "*Waiting* should not be printed"
+  show (Halted _)         = error "*Halted* should not be printed"
+  show (Resume _)         = error "*Resume* should not be printed"
 
 -- Evaluator
 
 eval :: Expr -> Env -> Kont Value
+
+-------------------------- Basics
 eval (Number n) _ = return (IntVal n)
 
 eval (Variable v) env = return (find env v)
 
 eval (Apply f e) env = 
   eval f env >>= (\ (Closure id env' body) ->
-      eval e env >>= (\ v -> eval body (define env' id v))
+    eval e env >>= (\ v -> eval body (define env' id v))
   )
 
 eval (If e1 e2 e3) env =
@@ -126,10 +128,19 @@ eval (If e1 e2 e3) env =
     case b of
       BoolVal True -> eval e2 env
       BoolVal False -> eval e3 env
-      _ -> error "Boolean required in conditional")
+      _ -> error "Boolean required in conditional"
+  )
 
 eval (Lambda x e1) env = return $ Closure x env e1
 
+eval (Pipe e1 e2) env = 
+  eval e1 env >>= (\_ -> eval e2 env)
+
+eval (Let d e1) env =
+  elab d env >>= (\env' -> eval e1 env')
+--------------------------
+
+-------------------------- Pattern matching
 eval (Injector name args) env = values evs >>= (\vs -> 
   return $ Injection name vs)
   where evs = map (`eval` env) args
@@ -139,68 +150,52 @@ eval (Match ex pats) env = eval ex env >>= (\v ->
       Just (pex, env') -> eval pex env'
       Nothing          -> return $ Injection "ExcMatch" []
   )
+--------------------------
 
-eval (Let d e1) env =
-  elab d env >>= (\env' -> eval e1 env')
-
-eval (Pipe e1 e2) env = 
-  eval e1 env >>= (\_ -> eval e2 env)
-
--------------------------- Only work here, with bombs
+-------------------------- Concurrency
 eval (Send ce ve) env =
   eval (SendP ce ve) env >>= (\v -> case v of 
-    Exception _ -> (shiftP tp2R $ \_ -> return v)
+    Exception _ -> (shift px $ \_ -> return v)
     _           -> return v)
 
 eval (SendP ce ve) env = 
-  shiftP tp2L $ \rest -> 
+  shift pp $ \rest -> 
   eval ce env >>= (\(ChanHandler l) -> 
     eval ve env >>= (\v -> 
       lift (get l >>= (\cst -> case cst of 
         Empty  -> put l (WR v rest) >>= (\() -> return $ Halted l)
-        WW rk  -> put l (Ready (rk v) Nothing) >>= (\() -> return (Resume $ rest Unit)) -- calling rest here will continue execution, which is also what i do in scheduler! do it here!
+        WW rk  -> put l (Ready (rk v) Nothing) >>= 
+                  (\() -> return (Resume $ rest Unit))
         Closed  -> return (Resume $ rest (Exception (Injection "ExcClosed" [])))
-        Ready res _ -> put l (Ready res (Just (WR v rest))) >>= (\() -> return $ Halted l)
+        Ready res _ -> put l (Ready res (Just (WR v rest))) >>= 
+                       (\() -> return $ Halted l)
       )) >>= (\v -> case v of 
-        Resume res -> res
-        Halted init_cst -> return v) 
+        Resume res -> res            -- resume execution 
+        Halted init_cst -> return v) -- return to scheduler
   ))
 
 eval (Receive ce) env =
   eval (ReceiveP ce) env >>= (\v -> case v of 
-    Exception _ -> (shiftP tp2R $ \_ -> return v)
+    Exception _ -> (shift px $ \_ -> return v)
     _           -> return v)
 
 eval (ReceiveP ce) env = 
-  shiftP tp2L $ \rest ->
+  shift pp $ \rest ->
   eval ce env >>= (\(ChanHandler l) -> 
     lift (get l >>= (\ cst -> case cst of 
       Empty   -> put l (WW rest) >>= (\() -> return $ Halted l)
-      WR v sk -> put l (Ready (sk Unit) Nothing) >>= (\() -> return (Resume $ rest v))
+      WR v sk -> put l (Ready (sk Unit) Nothing) >>= 
+                 (\() -> return (Resume $ rest v))
       Closed  -> return (Resume $ rest (Exception (Injection "ExcClosed" [])))
-      Ready res _ -> put l (Ready res (Just (WW rest))) >>= (\() -> return $ Halted l)
+      Ready res _ -> put l (Ready res (Just (WW rest))) >>= 
+                     (\() -> return $ Halted l)
     )) >>= (\v -> case v of 
-      Resume res -> res
-      Halted _ -> return $ v)
+      Resume res -> res       -- resume execution 
+      Halted _ -> return $ v) -- return to scheduler
   )
-------------------------------
 
 eval (Parallel es) env = 
-  scheduler (map (\e -> pushPrompt tp2L (eval e env)) es, []) 0
-
-eval (TryCatch ex pats) env =   
-  (\v -> case v of
-    Exception e -> case trymatch e pats env of
-                     Just (pex, env') -> eval pex env'
-                     Nothing          -> (shiftP tp2R $ \normal -> return $ Exception e)
-    _           -> return v
-  ) =<< (pushPrompt tp2R (eval ex env))
-    
-eval (Throw th) env = 
-  shiftP tp2R $ \normal ->
-  eval th env >>= (\v -> case v of
-    Injection n vs -> return $ Exception v
-    _              -> error "Must throw a sum type")
+  scheduler (map (\e -> pushPrompt pp (eval e env)) es, []) 0
 
 eval NewChan env = lift $  
   new >>= (\l -> 
@@ -216,36 +211,52 @@ eval (Close c) env = eval c env >>= (\(ChanHandler l) ->
       WW rk        -> put l (Ready (rk (Exception (Injection "ExcClosed" [])))
                                    (Just Closed))
     ) >>= (\() -> return Unit))
+------------------------------
 
+------------------------------ Exception handling
+eval (TryCatch ex pats) env =   
+  (\v -> case v of
+    Exception e -> case trymatch e pats env of
+                     Just (pex, env') -> eval pex env'
+                     Nothing          -> (shift px $ \_ -> return $ Exception e)
+    _           -> return v
+  ) =<< (pushPrompt px (eval ex env))
+    
+eval (Throw th) env = 
+  shift px $ \_ ->
+  eval th env >>= (\v -> case v of
+    Injection n vs -> return $ Exception v
+    _              -> error "Must throw a sum type")
+------------------------------
+
+------------------------------ Primitive operations
 eval (BinPrim bop e1 e2) env = case bop of
-  Plus -> eval e1 env >>= (\(IntVal n1) -> 
-            eval e2 env >>= (\(IntVal n2) -> 
-              return $ IntVal (n1 + n2)))
-  Minus ->  eval e1 env >>= (\(IntVal n1) -> 
-              eval e2 env >>= (\(IntVal n2) -> 
-                return $ IntVal (n1 - n2)))
-  Times ->  eval e1 env >>= (\(IntVal n1) -> 
-              eval e2 env >>= (\(IntVal n2) -> 
-                return $ IntVal (n1 * n2)))
-  Div -> eval e1 env >>= (\(IntVal n1) -> 
-           eval e2 env >>= (\(IntVal n2) -> 
-             return $ IntVal (n1 `div` n2)))
-  Mod -> eval e1 env >>= (\(IntVal n1) -> 
-           eval e2 env >>= (\(IntVal n2) -> 
-             return $ IntVal (n1 `mod` n2)))
+  Plus -> arithmeticBop (+) e1 e2 env
+  Minus -> arithmeticBop (-) e1 e2 env
+  Times -> arithmeticBop (*) e1 e2 env
+  Div -> arithmeticBop (div) e1 e2 env
+  Mod -> arithmeticBop (mod) e1 e2 env
   Equal -> eval e1 env >>= (\v1 -> 
             eval e2 env >>= (\v2 -> 
               return $ BoolVal (v1 == v2)))
-  And -> eval e1 env >>= (\(BoolVal b1) -> 
-          eval e2 env >>= (\(BoolVal b2) -> 
-            return $ BoolVal (b1 && b2)))
-  Or -> eval e1 env >>= (\(BoolVal b1) -> 
-          eval e2 env >>= (\(BoolVal b2) -> 
-            return $ BoolVal (b1 || b2)))
+  And -> logicBop (&&) e1 e2 env
+  Or -> logicBop (||) e1 e2 env
 
 eval (MonPrim mop e) env = case mop of
   Neg -> eval e env >>= (\(IntVal n) -> return $ IntVal (-n))
 
+arithmeticBop funcop e1 e2 env = 
+  eval e1 env >>= (\(IntVal n1) -> 
+    eval e2 env >>= (\(IntVal n2) -> 
+      return $ IntVal (funcop n1 n2)))
+
+logicBop funcop e1 e2 env = 
+  eval e1 env >>= (\(BoolVal b1) -> 
+    eval e2 env >>= (\(BoolVal b2) -> 
+      return $ BoolVal (funcop b1 b2)))
+------------------------------
+
+-- Environment expansion
 elab :: Defn -> Env -> Kont Env
 elab (Val x e) env =
   eval e env >>= (\v -> return (define env x v))
@@ -255,10 +266,9 @@ elab (Rec x e) env =
       return env' where env' = define env x (Closure fp env' body)
     _ ->
       error "RHS of letrec must be a lambda"
-elab (Data _ ctors) env = foldM (\env' cdef -> elab cdef env') env ctors
+elab (Data _ ctors) env = foldM (\ env' cdef -> elab cdef env') env ctors
 
--- scheduler has no knowledge of other prompts
-
+-- Scheduler
 scheduler :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
 scheduler ([], rs) w = if w == 0 
                        then values rs >>= (\vs -> return $ Tuple (reverse vs))
@@ -279,12 +289,14 @@ scheduler ((k:ks), rs) w = k >>= (\v -> case v of
     v            -> scheduler (ks, (return v:rs)) w
   )
 
+-- Helpers
+
+values :: [Kont Value] -> Kont [Value]
 values [] = return []
 values (c:cvs) = c >>= (\v -> values cvs >>= (\vs -> return (v:vs)))
 
--- TODO: if exception undefined in the patterns it 
---       doesnt yeield an error from env
-
+-- TODO: Lazyness makes it seem like undefined exception are fine, 
+--       since they are not evaluated
 trymatch :: Value -> [Pattern] -> Env -> Maybe (Expr, Env)
 trymatch v [] env = Nothing
 trymatch v ((Pattern patCtor pex):ps) env = 
@@ -325,9 +337,9 @@ init_cst = CST empty_cst  -- initial empty channel state
 obey :: Phrase -> ProgState -> (String, ProgState)
 obey (Calculate exp) (env, mem) =
   -- nice compositionality
-  let (v, mem') = runS (runCC $ pushPrompt tp2R (eval exp env)) mem in 
+  let (v, mem') = (runS . runCC) (pushPrompt px (eval exp env)) mem in 
   (show v, (env, mem'))
 obey (Define def) (env, mem) =
   let x = def_lhs def in
-  let (env', mem') = runS (runCC $ elab def env) mem in 
+  let (env', mem') = (runS . runCC) (elab def env) mem in 
   ("", (env', mem'))
