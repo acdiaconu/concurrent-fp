@@ -23,6 +23,11 @@ import Debug.Trace
 
 -- State monad
 
+-- TODO:
+-- * create standalone function for matching
+-- * use that for match and trycatch eval
+-- * implement the primes example!!!
+
 newtype State s a = State { runS :: s -> (a, s) }
 
 -- Instances to make it a monad
@@ -58,7 +63,7 @@ type Env = Environment Value
 newtype CST = CST (ChanState Value Suspended)
 
 type Suspended = CC PromptCX (State CST) Value
-type PromptCX = P2 Value Value
+type PromptCX = TP2 Value Value Value
 type ProgState = (Env, CST)
 type Arg = String
 type Name = String
@@ -74,15 +79,12 @@ data Value =
   | Closure Arg Env Expr
   | Injection String [Value]    
   | Tuple [Value]
-  | Waiting Location              
   | Exception Value
+  
+  -- denotable, not expressible
   | Resume Suspended
-
--- TODO: custom exceptions -> just use the environment and have custom exc
---                            declarations, and make them
---
---       change the exception mechanism to be the same as ocaml, try ... with 
---       and the pattern matching for the exception
+  | Waiting Location              
+  | Halted Location
 
 -- Some useful instances
 
@@ -98,11 +100,14 @@ instance Show Value where
   show (BoolVal b)         = if b then "true" else "false"
   show (ChanHandler a)     = "<handler " ++ show a ++ ">"
   show (Closure _ _ _)     = "<fundef>"
-  show (Exception v )      = "<exception -> " ++ show v ++ ">"
+  show (Exception v )      = "<unhandled exception -> " ++ show v ++ ">"
   show (Tuple vs)          = "(" ++ intercalate "," (map show vs) ++ ")"
   show Unit                = "unit"
   show (Injection name vs) = name ++ " " ++ intercalate " " (map show vs)
-  show _                   = error "should not be shown"
+
+  show (Waiting _)        = "waiting"
+  show (Halted _)         = "halted"
+  show (Resume _)         = "resume"
 
 -- Evaluator
 
@@ -129,12 +134,10 @@ eval (Injector name args) env = values evs >>= (\vs ->
   return $ Injection name vs)
   where evs = map (`eval` env) args
 
-eval (Match ex []) env = return $ Injection "ExcMatch" []
-eval (Match ex ((Pattern patCtor pex):pats)) env = 
-  eval ex env >>= (\ inj -> 
-    case trydefine patCtor inj env of
-      Just env' -> eval pex env'
-      Nothing -> eval (Match ex pats) env
+eval (Match ex pats) env = eval ex env >>= (\v -> 
+    case trymatch v pats env of
+      Just (pex, env') -> eval pex env'
+      Nothing          -> return $ Injection "ExcMatch" []
   )
 
 eval (Let d e1) env =
@@ -143,57 +146,76 @@ eval (Let d e1) env =
 eval (Pipe e1 e2) env = 
   eval e1 env >>= (\_ -> eval e2 env)
 
-eval (Send ce ve) env = 
+-------------------------- Only work here, with bombs
+eval (Send ce ve) env =
+  eval (SendP ce ve) env >>= (\v -> case v of 
+    Exception _ -> (shiftP tp2R $ \_ -> return v)
+    _           -> return v)
+
+eval (SendP ce ve) env = 
+  shiftP tp2L $ \rest -> 
   eval ce env >>= (\(ChanHandler l) -> 
     eval ve env >>= (\v -> 
-      shiftP p2L $ \sk -> 
-      lift $ get l >>= (\cst -> case cst of 
-        Empty   -> put l (WR v $ sk) >>= (\() -> return (Waiting l))
-        WW rk   -> put l (Ready $ rk v) >>= (\() -> 
-                     return $ Resume (sk Unit)
-                   )
-        Closed  -> return (Injection "ExcClosed" [])  -- built in exc
-        _       -> return (Injection "ExcInvalid" []) -- built in exc
-      )
-    )
-  )
+      lift (get l >>= (\cst -> case cst of 
+        Empty  -> put l (WR v rest) >>= (\() -> return $ Halted l)
+        WW rk  -> put l (Ready (rk v) Nothing) >>= (\() -> return (Resume $ rest Unit)) -- calling rest here will continue execution, which is also what i do in scheduler! do it here!
+        Closed  -> return (Resume $ rest (Exception (Injection "ExcClosed" [])))
+        Ready res _ -> put l (Ready res (Just (WR v rest))) >>= (\() -> return $ Halted l)
+      )) >>= (\v -> case v of 
+        Resume res -> res
+        Halted init_cst -> return v) 
+  ))
 
-eval (Receive ce) env = 
-  eval ce env >>= 
-    (\(ChanHandler l) -> 
-      shiftP p2L $ \rk -> 
-      lift $ get l >>= (\ cst -> case cst of 
-          Empty   -> put l (WW $ rk) >>= (\() -> return (Waiting l))
-          WR v sk -> put l (Ready $ sk Unit) >>= (\() -> 
-                       return $ Resume (rk v)
-                     )
-          Closed  -> return (Injection "ExcClosed" [])  -- built in exc
-          _       -> return (Injection "ExcInvalid" []) -- built in exc
-    ))
+eval (Receive ce) env =
+  eval (ReceiveP ce) env >>= (\v -> case v of 
+    Exception _ -> (shiftP tp2R $ \_ -> return v)
+    _           -> return v)
+
+eval (ReceiveP ce) env = 
+  shiftP tp2L $ \rest ->
+  eval ce env >>= (\(ChanHandler l) -> 
+    lift (get l >>= (\ cst -> case cst of 
+      Empty   -> put l (WW rest) >>= (\() -> return $ Halted l)
+      WR v sk -> put l (Ready (sk Unit) Nothing) >>= (\() -> return (Resume $ rest v))
+      Closed  -> return (Resume $ rest (Exception (Injection "ExcClosed" [])))
+      Ready res _ -> put l (Ready res (Just (WW rest))) >>= (\() -> return $ Halted l)
+    )) >>= (\v -> case v of 
+      Resume res -> res
+      Halted _ -> return $ v)
+  )
+------------------------------
 
 eval (Parallel es) env = 
-  pushPrompt p2R $ 
-    interleave ((map (\e -> pushPrompt p2L (eval e env)) es), []) 0
+  scheduler (map (\e -> pushPrompt tp2L (eval e env)) es, []) 0
 
-eval (Throw th) env = 
-  eval th env >>= (\v -> case v of
-    Injection n vs -> shiftP p2R (\k -> return $ Exception v)
-    _              -> error "Must throw a sum type")
+eval (TryCatch ex pats) env =   
+  (\v -> case v of
+    Exception e -> case trymatch e pats env of
+                     Just (pex, env') -> eval pex env'
+                     Nothing          -> (shiftP tp2R $ \normal -> return $ Exception e)
+    _           -> return v
+  ) =<< (pushPrompt tp2R (eval ex env))
     
+eval (Throw th) env = 
+  shiftP tp2R $ \normal ->
+  eval th env >>= (\v -> case v of
+    Injection n vs -> return $ Exception v
+    _              -> error "Must throw a sum type")
 
 eval NewChan env = lift $  
   new >>= (\l -> 
     put l Empty >>= (\() -> return $ ChanHandler l))
 
 eval (Close c) env = eval c env >>= (\(ChanHandler l) -> 
-    lift $ put l Closed >>= (\() -> return Unit))
-
-eval (TryCatch es ef) env = 
-  eval es env >>= (\v -> case v of
-      Exception e -> (eval ef env >>= (\(Closure x env' body) -> 
-                        eval body (define env' x v)))
-      _           -> return v
-  )
+    (lift $ get l >>= \cst -> case cst of 
+      Empty        -> put l Closed
+      Closed       -> error "already closed"
+      Ready res _  -> put l (Ready res (Just Closed))
+      WR _ wk      -> put l (Ready (wk (Exception (Injection "ExcClosed" [])))
+                                   (Just Closed))
+      WW rk        -> put l (Ready (rk (Exception (Injection "ExcClosed" [])))
+                                   (Just Closed))
+    ) >>= (\() -> return Unit))
 
 eval (BinPrim bop e1 e2) env = case bop of
   Plus -> eval e1 env >>= (\(IntVal n1) -> 
@@ -235,30 +257,47 @@ elab (Rec x e) env =
       error "RHS of letrec must be a lambda"
 elab (Data _ ctors) env = foldM (\env' cdef -> elab cdef env') env ctors
 
-interleave :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
-interleave ([], rs) w = if w == 0 
-                        then values rs >>= (\vs -> return $ Tuple (reverse vs))
-                        else interleave (reverse rs, []) w
-interleave ((k:ks), rs) w = k >>= (\v -> case v of 
-    Exception e  -> abortP p2R (return $ Exception e)
-    Resume res   -> interleave (res:ks, rs) w
+-- scheduler has no knowledge of other prompts
+
+scheduler :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
+scheduler ([], rs) w = if w == 0 
+                       then values rs >>= (\vs -> return $ Tuple (reverse vs))
+                       else scheduler (reverse rs, []) w
+scheduler ((k:ks), rs) w = k >>= (\v -> case v of 
+    Halted l     -> scheduler (ks, (return $ Waiting l):rs) (w + 1)
     Waiting l    -> lift (get l >>= (\cst -> case cst of 
-                      Ready sk -> return (1, sk)
-                      _            -> return (2, (return $ Waiting l))
+                      Ready sk next -> (
+                          case next of 
+                            Just chn -> put l chn
+                            Nothing  -> put l Empty
+                        ) >>= (\() -> return (1, sk))
+                      _             -> return (2, return $ Waiting l)
                     )) >>= (\(n, r) -> case n of 
-                      1 -> interleave ((r:ks), rs) (w - 1)
-                      2 -> interleave (ks, (r:rs)) (w + 1)
+                      1 -> scheduler ((r:ks), rs) (w - 1)
+                      2 -> scheduler (ks, (r:rs)) w
                     )
-    v            -> interleave (ks, (return v:rs)) w
+    v            -> scheduler (ks, (return v:rs)) w
   )
 
 values [] = return []
 values (c:cvs) = c >>= (\v -> values cvs >>= (\vs -> return (v:vs)))
 
-trydefine (VarCtor n vars) (Injection n' vals) env =
+-- TODO: if exception undefined in the patterns it 
+--       doesnt yeield an error from env
+
+trymatch :: Value -> [Pattern] -> Env -> Maybe (Expr, Env)
+trymatch v [] env = Nothing
+trymatch v ((Pattern patCtor pex):ps) env = 
+  case (trydefine v patCtor env) of
+    Just env' -> Just (pex, env')
+    Nothing   -> trymatch v ps env
+
+trydefine :: Value -> VarCtor -> Env -> Maybe Env
+trydefine (Injection n' vals) (VarCtor n vars) env =
   if n == n'
   then Just $ defargs env vars vals
   else Nothing
+trydefine a b c = error (show a ++ show b)
 
 -- Initial environment, which only exposes primitive data
 -- We deal with primitive operations during parsing, by converting them into
@@ -271,7 +310,7 @@ init_env =
     ("true", BoolVal True), 
     ("false", BoolVal False),
     ("unit", Unit),
-    -- some primitive constructors for the exc data
+    -- some primitive exceptions
     ("ExcClosed", Injection "ExcClosed" []),
     ("ExcInvalid", Injection "ExcInvalid" []),
     ("ExcMatch", Injection "ExcMatch" [])]
@@ -279,16 +318,14 @@ init_env =
 init_cst :: CST
 init_cst = CST empty_cst  -- initial empty channel state
 
--- -- MAIN PROGRAM
+-- MAIN PROGRAM
 
 -- Deal with top-state exprs and defs
 
--- Observe the super nice compositionality, how we uncover each layer 
--- independently.
--- This might actually be what Filinski hinted at in his monadic reflection.
 obey :: Phrase -> ProgState -> (String, ProgState)
 obey (Calculate exp) (env, mem) =
-  let (v, mem') = runS (runCC $ eval exp env) mem in 
+  -- nice compositionality
+  let (v, mem') = runS (runCC $ pushPrompt tp2R (eval exp env)) mem in 
   (show v, (env, mem'))
 obey (Define def) (env, mem) =
   let x = def_lhs def in

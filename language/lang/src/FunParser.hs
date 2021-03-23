@@ -13,7 +13,7 @@ data Token =
   | IF | THEN | ELSE | LET | REC | VAL | LAMBDA | IN | WHILE | DO
   | PIPE | MINUS | STAR | AMPER | ARRAY | BRA | KET | DATA | MATCH | WITH
   | LBRACE | RBRACE | ARROW | VBAR | DOT | OPEN | PAR | SEND | RECV | NEWCH
-  | BADTOK Char | THROW | CLOSE
+  | BADTOK Char | THROW | CLOSE | CATCH
   deriving Eq
 
 data IdKind = 
@@ -34,7 +34,7 @@ instance Show Token where
       BRA -> "["; KET -> "]"; LBRACE -> "{"; RBRACE -> "}"
       ARROW -> "=>"; VBAR -> "|"; DOT -> "."; OPEN -> "open"; PAR -> "||"
       SEND -> "!"; RECV -> "?"; NEWCH -> "newChan"; DATA -> "data";
-      MATCH -> "match"; WITH -> "with"; 
+      MATCH -> "match"; WITH -> "with"; CATCH -> "catch"
       CLOSE -> "close"; THROW -> "throw"; BADTOK c -> [c]
 
 kwlookup = 
@@ -44,7 +44,7 @@ kwlookup =
       ("do", DO), ("array", ARRAY), ("open", OPEN),
       ("div", IDENT MULOP "div"), ("mod", IDENT MULOP "mod"), 
       ("newChan", NEWCH), ("data", DATA), ("match", MATCH), ("with", WITH),
-      ("throw", THROW), ("close", CLOSE)]
+      ("throw", THROW), ("close", CLOSE), ("catch", CATCH)]
 
 lexer =
   do 
@@ -142,6 +142,8 @@ p_expr =
 		e1 <- p_expr; return (nested_lam xs e1)
   <+> do eat MATCH; ex <- p_expr; eat WITH; pats <- p_seq p_pattern;
          return (Match ex pats) 
+  <+> do eat CATCH; ex <- p_expr; eat WITH; pats <- p_seq p_pattern;
+         return (TryCatch ex pats)
   <+> p_par
 
 p_pattern = do p <- p_patctor; eat ARROW; ex <- p_expr; eat VBAR;

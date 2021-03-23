@@ -1,0 +1,10 @@
+((catch (x?) with ExcClosed => 23) || 2 || x!1);;
+catch ((x?)>>2423 || 2 || close x) with ExcClosed => 23;;
+((catch (x?) with ExcClosed => 23) || 2 || close x);;
+
+(if (c? >> c!5 >> c?) then 2 else 5  || 2 || c!2 >> c? >> c!false);;
+
+val x = newChan;;
+val y = newChan;;
+(close x >> y!2 || x? >> y? || 2);;
+(close x >> y!2 || (catch (x?) with ExcClosed => 23) >> y? || 2);;

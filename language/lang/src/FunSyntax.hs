@@ -25,9 +25,11 @@ data Expr =
   | Parallel [Expr]
   | Send Expr Expr
   | Receive Expr
+  | SendP Expr Expr
+  | ReceiveP Expr
   | NewChan
   | Close Expr
-  | TryCatch Expr Expr
+  | TryCatch Expr [Pattern]
   | Throw Expr
   deriving Show
 

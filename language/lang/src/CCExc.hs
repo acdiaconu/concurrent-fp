@@ -67,6 +67,7 @@ module CCExc (
               -- Pre-defined prompt flavors
 	      PS, ps,
               P2, p2L, p2R,
+			  TP2, tp2L, tp2M, tp2R,
               PP, pp,
               PM, pm,
               PD, newPrompt,
@@ -264,3 +265,31 @@ newPrompt mark = (inj, prj)
 -- is useful for that purpose.
 as_prompt_type :: Prompt p m w -> w -> Prompt p m w
 as_prompt_type = const
+
+
+data TEither a b c = TLeft a | TMiddle b | TRight c
+
+newtype TP2 w1 w2 w3 m x = 
+  TP2 (TEither (CCT (TP2 w1 w2 w3) m x w1) (CCT (TP2 w1 w2 w3) m x w2) (CCT (TP2 w1 w2 w3) m x w3))
+
+-- There are two generalized prompts of the flavor P2:
+tp2L :: Prompt (TP2 w1 w2 w3) m w1
+tp2L = (inj, prj)
+ where
+ inj = TP2 . TLeft
+ prj (TP2 (TLeft x)) = Just x
+ prj _ = Nothing
+
+tp2M :: Prompt (TP2 w1 w2 w3) m w2
+tp2M = (inj, prj)
+ where
+ inj = TP2 . TMiddle
+ prj (TP2 (TMiddle x)) = Just x
+ prj _ = Nothing
+
+tp2R :: Prompt (TP2 w1 w2 w3) m w3
+tp2R = (inj, prj)
+ where
+ inj = TP2 . TRight
+ prj (TP2 (TRight x)) = Just x
+ prj _ = Nothing

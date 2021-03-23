@@ -1,0 +1,14 @@
+rec server c acc =
+catch 
+    server c (acc + c?)  
+with 
+    ExcClosed => acc ;;
+
+rec client c lim = 
+    if (lim = 1)
+    then close c >> unit
+    else c!1 >> client c (lim + 1) ;;
+
+val main = 
+    let val c = newChan in 
+    client c 0 || server c 0 ;;
