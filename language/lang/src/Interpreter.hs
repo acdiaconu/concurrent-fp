@@ -45,6 +45,9 @@ instance Functor (State s) where
 instance Applicative (State s) where
   pure = return
 
+instance MonadFail (State s) where
+  fail = error "state matching failed"
+
 -- Operations for the state monad
 
 get :: Location -> State CST (CType Value Suspended)
@@ -56,7 +59,7 @@ put l ct = State $ \(CST chs) -> ((), CST $ update chs l ct)
 new :: State CST Location
 new = State $ \(CST chs) -> let (l, chs') = fresh chs in (l, CST chs')
 
--- Helpers
+-- Helper types
 
 type Env = Environment Value
 
@@ -119,25 +122,26 @@ eval (Number n) _ = return (IntVal n)
 eval (Variable v) env = return (find env v)
 
 eval (Apply f e) env = 
-  eval f env >>= (\ (Closure id env' body) ->
-    eval e env >>= (\ v -> eval body (define env' id v))
-  )
+  do Closure id env' body <- eval f env
+     v                    <- eval e env
+     eval body (define env' id v)
 
-eval (If e1 e2 e3) env =
-  eval e1 env >>= (\b ->
-    case b of
-      BoolVal True -> eval e2 env
-      BoolVal False -> eval e3 env
-      _ -> error "Boolean required in conditional"
-  )
+eval (If cond et ef) env =
+  do cond <- eval cond env  
+     case cond of
+       BoolVal True -> eval et env
+       BoolVal False -> eval ef env
+       _ -> error "Boolean required in conditional"
 
 eval (Lambda x e1) env = return $ Closure x env e1
 
 eval (Pipe e1 e2) env = 
-  eval e1 env >>= (\_ -> eval e2 env)
+  do eval e1 env -- we discard the first expression's result
+     eval e2 env
 
 eval (Let d e1) env =
-  elab d env >>= (\env' -> eval e1 env')
+  do env' <- elab d env 
+     eval e1 env'
 --------------------------
 
 -------------------------- Pattern matching
@@ -145,121 +149,166 @@ eval (Injector name args) env = values evs >>= (\vs ->
   return $ Injection name vs)
   where evs = map (`eval` env) args
 
-eval (Match ex pats) env = eval ex env >>= (\v -> 
-    case trymatch v pats env of
-      Just (pex, env') -> eval pex env'
-      Nothing          -> return $ Injection "ExcMatch" []
-  )
+eval (Match ex pats) env = 
+  do v <- eval ex env 
+     case trymatch v pats env of
+       Just (pex, env') -> eval pex env'
+       Nothing          -> return $ Injection "ExcMatch" []
 --------------------------
 
 -------------------------- Concurrency
 eval (Send ce ve) env =
-  eval (SendP ce ve) env >>= (\v -> case v of 
-    Exception _ -> (shift px $ \_ -> return v)
-    _           -> return v)
+  do v <- eval (SendP ce ve) env
+     case v of 
+       Exception _ -> shift px $ \_ -> return v
+       _           -> return v
 
 eval (SendP ce ve) env = 
   shift pp $ \rest -> 
-  eval ce env >>= (\(ChanHandler l) -> 
-    eval ve env >>= (\v -> 
-      lift (get l >>= (\cst -> case cst of 
-        Empty  -> put l (WR v rest) >>= (\() -> return $ Halted l)
-        WW rk  -> put l (Ready (rk v) Nothing) >>= 
-                  (\() -> return (Resume $ rest Unit))
-        Closed  -> return (Resume $ rest (Exception (Injection "ExcClosed" [])))
-        Ready res _ -> put l (Ready res (Just (WR v rest))) >>= 
-                       (\() -> return $ Halted l)
-      )) >>= (\v -> case v of 
-        Resume res -> res            -- resume execution 
-        Halted init_cst -> return v) -- return to scheduler
-  ))
+  do 
+    ChanHandler l <- eval ce env 
+    v <- eval ve env 
+    res <- lift $ -- descend to the state monad, to chech the channel's state
+      get l >>= \ chanState -> 
+        -- based on its state, we decide what to do
+        case chanState of 
+          Empty -> 
+            do
+              put l (WR v rest)
+              return $ Halted l
+          Ready res _ -> 
+            do 
+              put l $ Ready res (Just $ WR v rest)
+              return $ Halted l
+          WW rk -> 
+            do 
+              put l $ Ready (rk v) Nothing 
+              return $ Resume (rest Unit)
+          Closed -> 
+            return (Resume $ rest (Exception $ Injection "ExcClosed" []))
+    case res of 
+      Resume res -> res              -- resume execution, no scheduler involved
+      Halted init_cst -> return res  -- return to scheduler
 
 eval (Receive ce) env =
-  eval (ReceiveP ce) env >>= (\v -> case v of 
-    Exception _ -> (shift px $ \_ -> return v)
-    _           -> return v)
+  do v <- eval (ReceiveP ce) env
+     case v of 
+       Exception _ -> (shift px $ \_ -> return v)
+       _           -> return v
 
 eval (ReceiveP ce) env = 
   shift pp $ \rest ->
-  eval ce env >>= (\(ChanHandler l) -> 
-    lift (get l >>= (\ cst -> case cst of 
-      Empty   -> put l (WW rest) >>= (\() -> return $ Halted l)
-      WR v sk -> put l (Ready (sk Unit) Nothing) >>= 
-                 (\() -> return (Resume $ rest v))
-      Closed  -> return (Resume $ rest (Exception (Injection "ExcClosed" [])))
-      Ready res _ -> put l (Ready res (Just (WW rest))) >>= 
-                     (\() -> return $ Halted l)
-    )) >>= (\v -> case v of 
+  do 
+    ChanHandler l <- eval ce env
+    res <- lift $ 
+      get l >>= \ chanState -> 
+        case chanState of 
+          Empty -> 
+            do put l (WW rest)
+               return $ Halted l
+          Ready res _ -> 
+            do put l $ Ready res (Just $ WW rest)
+               return $ Halted l
+          WR v sk -> 
+            do put l (Ready (sk Unit) Nothing) 
+               return (Resume $ rest v)
+          Closed -> 
+            return (Resume $ rest (Exception $ Injection "ExcClosed" []))
+
+    case res of 
       Resume res -> res       -- resume execution 
-      Halted _ -> return $ v) -- return to scheduler
-  )
+      Halted _ -> return res -- return to scheduler
 
 eval (Parallel es) env = 
   scheduler (map (\e -> pushPrompt pp (eval e env)) es, []) 0
 
-eval NewChan env = lift $  
-  new >>= (\l -> 
-    put l Empty >>= (\() -> return $ ChanHandler l))
+eval NewChan env = 
+  lift $  
+  do l <- new 
+     put l Empty
+     return $ ChanHandler l
 
-eval (Close c) env = eval c env >>= (\(ChanHandler l) -> 
-    (lift $ get l >>= \cst -> case cst of 
-      Empty        -> put l Closed
-      Closed       -> error "already closed"
-      Ready res _  -> put l (Ready res (Just Closed))
-      WR _ wk      -> put l (Ready (wk (Exception (Injection "ExcClosed" [])))
-                                   (Just Closed))
-      WW rk        -> put l (Ready (rk (Exception (Injection "ExcClosed" [])))
-                                   (Just Closed))
-    ) >>= (\() -> return Unit))
+eval (Close c) env = 
+  do
+    ChanHandler l <- eval c env
+    lift $ 
+      get l >>= \ chanState -> case chanState of 
+        Empty        -> put l Closed
+        Closed       -> error "already closed"
+        Ready res _  -> put l (Ready res (Just Closed))
+        WR _ wk      -> put l (Ready (wk (Exception (Injection "ExcClosed" [])))
+                                    (Just Closed))
+        WW rk        -> put l (Ready (rk (Exception (Injection "ExcClosed" [])))
+                                    (Just Closed))
+    return Unit
 ------------------------------
 
 ------------------------------ Exception handling
 eval (TryCatch ex pats) env =   
-  (\v -> case v of
-    Exception e -> case trymatch e pats env of
-                     Just (pex, env') -> eval pex env'
-                     Nothing          -> (shift px $ \_ -> return $ Exception e)
-    _           -> return v
-  ) =<< (pushPrompt px (eval ex env))
+  do 
+    -- First we delimit the context in which we evaluate the expression. If 
+    -- we end in an error, we essentially discard this computation, since we 
+    -- discard everything up to the closest `px' prompt.
+    val <- pushPrompt px (eval ex env)
+    -- Check whether we have ended with an exception or not.
+    case val of
+      Exception e -> case trymatch e pats env of
+                      Just (pex, env') -> eval pex env'
+                      -- If no handler handles our error, propagate
+                      Nothing          -> shift px $ \_ -> return $ Exception e
+      _           -> return val -- No error, so just return the value.
     
 eval (Throw th) env = 
   shift px $ \_ ->
-  eval th env >>= (\v -> case v of
-    Injection n vs -> return $ Exception v
-    _              -> error "Must throw a sum type")
+  do
+    v <- eval th env 
+    case v of
+      Injection n vs -> return $ Exception v
+      _              -> error "Must throw a sum type"
 ------------------------------
 
 ------------------------------ Primitive operations
 eval (BinPrim bop e1 e2) env = case bop of
-  Plus -> arithmeticBop (+) e1 e2 env
-  Minus -> arithmeticBop (-) e1 e2 env
-  Times -> arithmeticBop (*) e1 e2 env
-  Div -> arithmeticBop (div) e1 e2 env
-  Mod -> arithmeticBop (mod) e1 e2 env
+  Plus -> arithmeticBOP (+) e1 e2 env
+  Minus -> arithmeticBOP (-) e1 e2 env
+  Times -> arithmeticBOP (*) e1 e2 env
+  Div -> arithmeticBOP (div) e1 e2 env
+  Mod -> arithmeticBOP (mod) e1 e2 env
   Equal -> eval e1 env >>= (\v1 -> 
             eval e2 env >>= (\v2 -> 
               return $ BoolVal (v1 == v2)))
-  And -> logicBop (&&) e1 e2 env
-  Or -> logicBop (||) e1 e2 env
+  And -> logicBOP (&&) e1 e2 env
+  Or -> logicBOP (||) e1 e2 env
 
-eval (MonPrim mop e) env = case mop of
-  Neg -> eval e env >>= (\(IntVal n) -> return $ IntVal (-n))
+eval (MonPrim mop e) env = 
+  case mop of
+    Neg -> 
+      do IntVal n <- eval e env 
+         return $ IntVal (-n)
 
-arithmeticBop funcop e1 e2 env = 
-  eval e1 env >>= (\(IntVal n1) -> 
-    eval e2 env >>= (\(IntVal n2) -> 
-      return $ IntVal (funcop n1 n2)))
+-- Helper functions that abstracts the pattern of evaluation for 
+-- binary primitive operations
 
-logicBop funcop e1 e2 env = 
-  eval e1 env >>= (\(BoolVal b1) -> 
-    eval e2 env >>= (\(BoolVal b2) -> 
-      return $ BoolVal (funcop b1 b2)))
+arithmeticBOP :: (Integer -> Integer -> Integer) -> 
+                 Expr -> Expr -> Env -> Kont Value
+arithmeticBOP op e1 e2 env = 
+  do IntVal n1 <- eval e1 env 
+     IntVal n2 <- eval e2 env  
+     return $ IntVal (op n1 n2)
+
+logicBOP :: (Bool -> Bool -> Bool) -> 
+            Expr -> Expr -> Env -> Kont Value
+logicBOP funcop e1 e2 env = 
+  do BoolVal b1 <- eval e1 env 
+     BoolVal b2 <- eval e2 env 
+     return $ BoolVal (funcop b1 b2)
 ------------------------------
 
 -- Environment expansion
 elab :: Defn -> Env -> Kont Env
 elab (Val x e) env =
-  eval e env >>= (\v -> return (define env x v))
+  do v <- eval e env 
+     return (define env x v)
 elab (Rec x e) env =
   case e of
     Lambda fp body ->
@@ -293,7 +342,10 @@ scheduler ((k:ks), rs) w = k >>= (\v -> case v of
 
 values :: [Kont Value] -> Kont [Value]
 values [] = return []
-values (c:cvs) = c >>= (\v -> values cvs >>= (\vs -> return (v:vs)))
+values (c:cvs) = 
+  do v <- c 
+     vs <- values cvs 
+     return (v:vs)
 
 -- TODO: Lazyness makes it seem like undefined exception are fine, 
 --       since they are not evaluated
@@ -328,15 +380,12 @@ init_env =
     ("ExcMatch", Injection "ExcMatch" [])]
 
 init_cst :: CST
-init_cst = CST empty_cst  -- initial empty channel state
+init_cst = CST empty_cst  
 
--- MAIN PROGRAM
-
--- Deal with top-state exprs and defs
-
+-- Deal with top-state exprs and defs. Observe the nice compositionality for
+-- that happens when we run the computations.
 obey :: Phrase -> ProgState -> (String, ProgState)
 obey (Calculate exp) (env, mem) =
-  -- nice compositionality
   let (v, mem') = (runS . runCC) (pushPrompt px (eval exp env)) mem in 
   (show v, (env, mem'))
 obey (Define def) (env, mem) =

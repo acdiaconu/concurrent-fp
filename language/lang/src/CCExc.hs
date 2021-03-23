@@ -114,6 +114,9 @@ instance Monad m => Functor (CC p m) where
         Iru a -> return (Iru $ f a)
         (Deru ctx body) -> return $ Deru (\x -> fmap f (ctx x)) body
 
+instance Monad m => MonadFail (CC p m) where
+	fail = error "pattern failed for CC"
+
 instance MonadTrans (CC p) where
     lift m = CC (m >>= return . Iru)
 
