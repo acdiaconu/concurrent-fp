@@ -286,7 +286,7 @@ eval (MonPrim mop e) env =
       do IntVal n <- eval e env 
          return $ IntVal (-n)
 
--- Helper functions that abstracts the pattern of evaluation for 
+-- Helper functions that abstract the pattern of evaluation for 
 -- binary primitive operations
 
 arithmeticBOP :: (Integer -> Integer -> Integer) -> 
@@ -391,4 +391,4 @@ obey (Calculate exp) (env, mem) =
 obey (Define def) (env, mem) =
   let x = def_lhs def in
   let (env', mem') = (runS . runCC) (elab def env) mem in 
-  ("", (env', mem'))
+  (print_defn env' x, (env', mem'))

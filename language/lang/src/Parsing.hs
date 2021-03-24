@@ -6,6 +6,8 @@ module Parsing(nextch, switch, star, incln, make_kwlookup,
     dialog, dialogm, printStrLn, showlist, joinwith,
     Parser, Syntax) where
 
+import Debug.Trace
+
 import Environment
 import qualified Data.Map as Map
 import qualified Data.List as List
@@ -249,18 +251,18 @@ load_file (lexer, parser) obey st0 text =
         -- End of file
       	return st 
       else
-	case runParser parser buf of
-	  Success x buf' ->
- 	    do st' <- execute (obey x) st st; loop (commit buf') st'
-	  Failure buf' ->
-	    do hPutStrLn stderr (syntax_error buf'); return st
-	  More _ ->
-	    do hPutStrLn stderr "Unexpected end of file"; return st
+        case runParser parser buf of
+          Success x buf' ->
+            do st' <- execute (obey x) st st; loop (commit buf') st'
+          Failure buf' ->
+            do hPutStrLn stderr (syntax_error buf'); return st
+          More _ ->
+            do hPutStrLn stderr "Unexpected end of file"; return st
 
 syntax_error :: Show t => LexBuf t -> String
 syntax_error buf =
   let MkLexTok tok lnum = gettok buf (errtok buf) in
-  "Syntax error on line " ++ show lnum ++ " at token '" ++ show tok ++ "'"
+  " Syntax error on line " ++ show lnum ++ " at token '" ++ show tok ++ "'12"
 
 execute :: (a -> IO b) -> a -> b -> IO b
 execute g x dflt =

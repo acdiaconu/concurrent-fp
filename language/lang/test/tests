@@ -1,5 +1,4 @@
 ---------- Miscs ----------
-
 val x = newChan ;;
 ((catch (x?) with ExcClosed => 23) || 2 || close x);;
 
@@ -17,9 +16,10 @@ val c = newChan ;;
 val x = newChan;;
 val y = newChan;;
 (close x >> y!2 || x? >> y? || 2);;
-(close x >> y!2 || (catch (x?) with ExcClosed => 23) >> y? || 2);;
 
----------- Producer / Consumer ----------
+val x = newChan;;
+val y = newChan;;
+(close x >> y!2 || (catch (x?) with ExcClosed => 23) >> y? || 2);;
 
 rec server c acc =
 catch 
@@ -35,3 +35,5 @@ rec client c lim =
 val main = 
     let val c = newChan in 
     client c 0 || server c 0 ;;
+
+main;;

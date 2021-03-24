@@ -83,9 +83,10 @@ lexer =
       '|' -> switch [('|', return PAR)] (return VBAR)
       ';' -> switch [(';', return SSEMI)] (return SEMI)
       ':' -> switch [('=', return ASSIGN)] 
-		(return (IDENT CONSOP ":"))
+		              (return (IDENT CONSOP ":"))
       ' ' -> lexer
       '\t' -> lexer 
+      '\r' -> do incln; lexer
       '\n' -> do incln; lexer
       _ -> return (BADTOK c)
               
@@ -93,6 +94,7 @@ scanComment =
   do 
     c <- nextch
     case c of
+      '\r' -> incln
       '\n' -> incln
       _ -> scanComment
 
