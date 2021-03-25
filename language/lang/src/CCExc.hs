@@ -66,8 +66,8 @@ module CCExc (
 
               -- Pre-defined prompt flavors
 	      PS, ps,
-              P2, pp, px,
-              PP, pp,
+              P2, pP, pX,
+              PP, ppp,
               PM, pm,
               PD, newPrompt,
               as_prompt_type
@@ -202,15 +202,15 @@ newtype P2 w1 w2 m x =
   P2 (Either (CCT (P2 w1 w2) m x w1) (CCT (P2 w1 w2) m x w2))
 
 -- There are two generalized prompts of the flavor P2:
-pp :: Prompt (P2 w1 w2) m w1
-pp = (inj, prj)
+pP :: Prompt (P2 w1 w2) m w1
+pP = (inj, prj)
  where
  inj = P2 . Left
  prj (P2 (Left x)) = Just x
  prj _ = Nothing
 
-px :: Prompt (P2 w1 w2) m w2
-px = (inj, prj)
+pX :: Prompt (P2 w1 w2) m w2
+pX = (inj, prj)
  where
  inj = P2 . Right
  prj (P2 (Right x)) = Just x

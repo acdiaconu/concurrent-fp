@@ -13,7 +13,7 @@ instance Show Location where
 data CType v k = Empty 
                | WR v (v -> k)
                | WW (v -> k)
-               | Ready k (Maybe (CType v k))
+               | Ready k (CType v k)
                | Closed
 
 newtype ChanState v k = Mem (Integer, Map.Map Integer (CType v k))

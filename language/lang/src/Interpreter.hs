@@ -23,11 +23,6 @@ import Debug.Trace
 
 -- State monad
 
--- TODO:
--- * create standalone function for matching
--- * use that for match and trycatch eval
--- * implement the primes example!!!
-
 newtype State s a = State { runS :: s -> (a, s) }
 
 -- Instances to make it a monad
@@ -160,67 +155,65 @@ eval (Match ex pats) env =
 eval (Send ce ve) env =
   do v <- eval (SendP ce ve) env
      case v of 
-       Exception _ -> shift px $ \_ -> return v
+       Exception _ -> shift pX $ \_ -> return v
        _           -> return v
 
 eval (SendP ce ve) env = 
-  shift pp $ \rest -> 
+  shift pP$ \rest -> 
   do 
     ChanHandler l <- eval ce env 
     v <- eval ve env 
-    res <- lift $ -- descend to the state monad, to chech the channel's state
+    sus <- lift $ -- descend to the state monad, to see if we suspend or not
       get l >>= \ chanState -> 
-        -- based on its state, we decide what to do
+        -- based on the state, we decide what the next state is
         case chanState of 
           Empty -> 
-            do
-              put l (WR v rest)
-              return $ Halted l
+            do put l (WR v rest)
+               return $ Halted l
           Ready res _ -> 
-            do 
-              put l $ Ready res (Just $ WR v rest)
-              return $ Halted l
+            do put l $ Ready res (WR v rest)
+               return $ Halted l
           WW rk -> 
-            do 
-              put l $ Ready (rk v) Nothing 
-              return $ Resume (rest Unit)
+            do put l $ Ready (rk v) Empty
+               return $ Resume (rest Unit)
           Closed -> 
             return (Resume $ rest (Exception $ Injection "ExcClosed" []))
-    case res of 
+    case sus of 
       Resume res -> res              -- resume execution, no scheduler involved
-      Halted init_cst -> return res  -- return to scheduler
+      Halted init_cst -> return sus  -- return to scheduler
 
+-- The code for Receive is almost identical to the one for Send
 eval (Receive ce) env =
   do v <- eval (ReceiveP ce) env
      case v of 
-       Exception _ -> (shift px $ \_ -> return v)
+       Exception _ -> (shift pX $ \_ -> return v)
        _           -> return v
 
 eval (ReceiveP ce) env = 
-  shift pp $ \rest ->
+  shift pP$ \rest ->
   do 
     ChanHandler l <- eval ce env
-    res <- lift $ 
+    sus <- lift $ 
       get l >>= \ chanState -> 
         case chanState of 
           Empty -> 
             do put l (WW rest)
                return $ Halted l
           Ready res _ -> 
-            do put l $ Ready res (Just $ WW rest)
+            do put l $ Ready res (WW rest)
                return $ Halted l
           WR v sk -> 
-            do put l (Ready (sk Unit) Nothing) 
+            do put l (Ready (sk Unit) Empty) 
                return (Resume $ rest v)
           Closed -> 
             return (Resume $ rest (Exception $ Injection "ExcClosed" []))
+    case sus of 
+      Resume res -> res 
+      Halted _ -> return sus 
 
-    case res of 
-      Resume res -> res       -- resume execution 
-      Halted _ -> return res -- return to scheduler
-
-eval (Parallel es) env = 
-  scheduler (map (\e -> pushPrompt pp (eval e env)) es, []) 0
+eval (Parallel cs) env = scheduler (components, []) 0
+  where components = map (`createComponent` env) cs
+        createComponent c env = pushPrompt pP (eval c env)
 
 eval NewChan env = 
   lift $  
@@ -235,11 +228,11 @@ eval (Close c) env =
       get l >>= \ chanState -> case chanState of 
         Empty        -> put l Closed
         Closed       -> error "already closed"
-        Ready res _  -> put l (Ready res (Just Closed))
+        Ready res _  -> put l (Ready res Closed)
         WR _ wk      -> put l (Ready (wk (Exception (Injection "ExcClosed" [])))
-                                    (Just Closed))
+                                     Closed)
         WW rk        -> put l (Ready (rk (Exception (Injection "ExcClosed" [])))
-                                    (Just Closed))
+                                     Closed)
     return Unit
 ------------------------------
 
@@ -249,22 +242,21 @@ eval (TryCatch ex pats) env =
     -- First we delimit the context in which we evaluate the expression. If 
     -- we end in an error, we essentially discard this computation, since we 
     -- discard everything up to the closest `px' prompt.
-    val <- pushPrompt px (eval ex env)
+    val <- pushPrompt pX (eval ex env)
     -- Check whether we have ended with an exception or not.
     case val of
       Exception e -> case trymatch e pats env of
                       Just (pex, env') -> eval pex env'
                       -- If no handler handles our error, propagate
-                      Nothing          -> shift px $ \_ -> return $ Exception e
+                      Nothing          -> shift pX $ \_ -> return $ Exception e
       _           -> return val -- No error, so just return the value.
     
 eval (Throw th) env = 
-  shift px $ \_ ->
-  do
-    v <- eval th env 
-    case v of
-      Injection n vs -> return $ Exception v
-      _              -> error "Must throw a sum type"
+  shift pX $ \_ ->
+  do v <- eval th env 
+     case v of
+       Injection n vs -> return $ Exception v
+       _              -> error "Must throw a sum type"
 ------------------------------
 
 ------------------------------ Primitive operations
@@ -274,11 +266,11 @@ eval (BinPrim bop e1 e2) env = case bop of
   Times -> arithmeticBOP (*) e1 e2 env
   Div -> arithmeticBOP (div) e1 e2 env
   Mod -> arithmeticBOP (mod) e1 e2 env
-  Equal -> eval e1 env >>= (\v1 -> 
-            eval e2 env >>= (\v2 -> 
-              return $ BoolVal (v1 == v2)))
   And -> logicBOP (&&) e1 e2 env
   Or -> logicBOP (||) e1 e2 env
+  Equal -> do v1 <- eval e1 env 
+              v2 <- eval e2 env 
+              return $ BoolVal (v1 == v2)
 
 eval (MonPrim mop e) env = 
   case mop of
@@ -311,29 +303,26 @@ elab (Val x e) env =
      return (define env x v)
 elab (Rec x e) env =
   case e of
-    Lambda fp body ->
-      return env' where env' = define env x (Closure fp env' body)
-    _ ->
-      error "RHS of letrec must be a lambda"
+    Lambda fp body -> return env' 
+      where env' = define env x (Closure fp env' body)
+    _ -> error "RHS of letrec must be a lambda"
 elab (Data _ ctors) env = foldM (\ env' cdef -> elab cdef env') env ctors
 
 -- Scheduler
 scheduler :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
 scheduler ([], rs) w = if w == 0 
-                       then values rs >>= (\vs -> return $ Tuple (reverse vs))
+                       then 
+                        do vs <- values rs
+                           return $ Tuple (reverse vs)
                        else scheduler (reverse rs, []) w
 scheduler ((k:ks), rs) w = k >>= (\v -> case v of 
     Halted l     -> scheduler (ks, (return $ Waiting l):rs) (w + 1)
     Waiting l    -> lift (get l >>= (\cst -> case cst of 
-                      Ready sk next -> (
-                          case next of 
-                            Just chn -> put l chn
-                            Nothing  -> put l Empty
-                        ) >>= (\() -> return (1, sk))
-                      _             -> return (2, return $ Waiting l)
-                    )) >>= (\(n, r) -> case n of 
-                      1 -> scheduler ((r:ks), rs) (w - 1)
-                      2 -> scheduler (ks, (r:rs)) w
+                      Ready sk next -> put l next >>= (\() -> return $ Left sk)
+                      _             -> return $ Right (return $ Waiting l)
+                    )) >>= (\val -> case val of 
+                      Left r -> scheduler ((r:ks), rs) (w - 1)
+                      Right r -> scheduler (ks, (r:rs)) w
                     )
     v            -> scheduler (ks, (return v:rs)) w
   )
@@ -386,7 +375,7 @@ init_cst = CST empty_cst
 -- that happens when we run the computations.
 obey :: Phrase -> ProgState -> (String, ProgState)
 obey (Calculate exp) (env, mem) =
-  let (v, mem') = (runS . runCC) (pushPrompt px (eval exp env)) mem in 
+  let (v, mem') = (runS . runCC) (pushPrompt pX (eval exp env)) mem in 
   (show v, (env, mem'))
 obey (Define def) (env, mem) =
   let x = def_lhs def in
