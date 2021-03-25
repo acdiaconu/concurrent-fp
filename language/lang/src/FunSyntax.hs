@@ -1,8 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-tabs #-}
 module FunSyntax where
 
-import Types
-
 type Ident = String
 
 data Phrase =

@@ -45,13 +45,13 @@ instance MonadFail (State s) where
 
 -- Operations for the state monad
 
-get :: Location -> State CST (CType Value Suspended)
+get :: ChanID -> State CST (CType Value Suspended)
 get l = State $ \(CST chs) -> (contents chs l, CST chs)
 
-put :: Location -> CType Value Suspended -> State CST ()
+put :: ChanID -> CType Value Suspended -> State CST ()
 put l ct = State $ \(CST chs) -> ((), CST $ update chs l ct)
 
-new :: State CST Location
+new :: State CST ChanID
 new = State $ \(CST chs) -> let (l, chs') = fresh chs in (l, CST chs')
 
 -- Helper types
@@ -73,16 +73,17 @@ data Value =
     Unit
   | IntVal Integer
   | BoolVal Bool
-  | ChanHandler Location
+  | ChanHandle ChanID
   | Closure Arg Env Expr
   | Injection String [Value]    
   | Tuple [Value]
   | Exception Value
   
-  -- denotable, not expressible
+  -- Bellow we have denotable, not expressible values
   | Resume Suspended
-  | Waiting Location              
-  | Halted Location
+  | Halted ChanID
+  | Waiting ChanID              
+
 
 -- Some useful instances
 
@@ -96,12 +97,14 @@ instance Eq Value where
 instance Show Value where
   show (IntVal n)          = show n
   show (BoolVal b)         = if b then "true" else "false"
-  show (ChanHandler a)     = "<handler " ++ show a ++ ">"
+  show (ChanHandle a)     = "<handle " ++ show a ++ ">"
   show (Closure _ _ _)     = "<fundef>"
   show (Exception v )      = "<unhandled exception -> " ++ show v ++ ">"
   show (Tuple vs)          = "(" ++ intercalate "," (map show vs) ++ ")"
   show Unit                = "unit"
-  show (Injection name vs) = name ++ " " ++ intercalate " " (map show vs)
+  show (Injection name vs) = if vs == []
+                             then name
+                             else name ++ " " ++ intercalate " " (map show vs)
 
   show (Waiting _)        = error "*Waiting* should not be printed"
   show (Halted _)         = error "*Halted* should not be printed"
@@ -140,8 +143,9 @@ eval (Let d e1) env =
 --------------------------
 
 -------------------------- Pattern matching
-eval (Injector name args) env = values evs >>= (\vs -> 
-  return $ Injection name vs)
+eval (Injector name args) env = 
+  do vs <- values evs 
+     return $ Injection name vs
   where evs = map (`eval` env) args
 
 eval (Match ex pats) env = 
@@ -161,7 +165,7 @@ eval (Send ce ve) env =
 eval (SendP ce ve) env = 
   shift pP$ \rest -> 
   do 
-    ChanHandler l <- eval ce env 
+    ChanHandle l <- eval ce env 
     v <- eval ve env 
     sus <- lift $ -- descend to the state monad, to see if we suspend or not
       get l >>= \ chanState -> 
@@ -192,7 +196,7 @@ eval (Receive ce) env =
 eval (ReceiveP ce) env = 
   shift pP$ \rest ->
   do 
-    ChanHandler l <- eval ce env
+    ChanHandle l <- eval ce env
     sus <- lift $ 
       get l >>= \ chanState -> 
         case chanState of 
@@ -219,11 +223,11 @@ eval NewChan env =
   lift $  
   do l <- new 
      put l Empty
-     return $ ChanHandler l
+     return $ ChanHandle l
 
 eval (Close c) env = 
   do
-    ChanHandler l <- eval c env
+    ChanHandle l <- eval c env
     lift $ 
       get l >>= \ chanState -> case chanState of 
         Empty        -> put l Closed
