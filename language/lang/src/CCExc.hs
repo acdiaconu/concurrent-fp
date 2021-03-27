@@ -64,7 +64,7 @@ module CCExc (
               shift0P,
               controlP,
 
-              -- Pre-defined prompt flavors
+          -- Pre-defined prompt flavors
 	      PS, ps,
               P2, pP, pX,
               PP, ppp,

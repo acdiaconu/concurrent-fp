@@ -1,4 +1,3 @@
-{-# OPTIONS_GHC -fno-warn-tabs #-}
 module FunSyntax where
 
 type Ident = String

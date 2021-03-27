@@ -21,21 +21,21 @@ import Debug.Trace
 -- TODO: A more algebraic approach, to allow easy combination of ``pure"
 --       algebraic effects (i.e. create a class for state as a first step)
 
--- State monad
+----- State monad -----
 
 newtype State s a = State { runS :: s -> (a, s) }
 
--- Instances to make it a monad
-
 instance Monad (State s) where
   return a = State $ \s -> (a, s)
-  (State sm) >>= f = State $ \s -> let (a, newS) = sm s
-                                       (State rs) = f a 
-                                   in rs newS
+  (State sm) >>= f = State $ \s -> 
+    let (a, newS) = sm s
+        (State rs) = f a 
+    in rs newS
 
 instance Functor (State s) where
-  fmap f (State m) = State $ \s -> let (a, newS) = m s
-                                    in (f a, newS)
+  fmap f (State m) = State $ \s -> 
+    let (a, newS) = m s
+    in (f a, newS)
 
 instance Applicative (State s) where
   pure = return
@@ -43,49 +43,46 @@ instance Applicative (State s) where
 instance MonadFail (State s) where
   fail = error "state matching failed"
 
--- Operations for the state monad
+----- Operations for the state monad -----
 
-get :: ChanID -> State CST (CType Value Suspended)
+get :: ChanID -> State CST (CType Value (Kont Value))
 get l = State $ \(CST chs) -> (contents chs l, CST chs)
 
-put :: ChanID -> CType Value Suspended -> State CST ()
+put :: ChanID -> CType Value (Kont Value) -> State CST ()
 put l ct = State $ \(CST chs) -> ((), CST $ update chs l ct)
 
 new :: State CST ChanID
 new = State $ \(CST chs) -> let (l, chs') = fresh chs in (l, CST chs')
 
--- Helper types
+----- Helper types -----
+type Env       = Environment Value
 
-type Env = Environment Value
+newtype CST    = CST (ChanState Value (Kont Value))
 
-newtype CST = CST (ChanState Value Suspended)
-
-type Suspended = CC PromptCX (State CST) Value
-type PromptCX = P2 Value Value
+type Kont      = CC PromptCX (State CST)
+type PromptCX  = P2 Value Value
 type ProgState = (Env, CST)
-type Arg = String
-type Name = String
-type Kont = CC PromptCX (State CST)
+type Arg       = String
+type Name      = String
 
--- Value domain
-
+----- Value domain-----
 data Value =
     Unit
   | IntVal Integer
   | BoolVal Bool
   | ChanHandle ChanID
   | Closure Arg Env Expr
-  | Injection String [Value]    
+  | Injection Name [Value]    
   | Tuple [Value]
   | Exception Value
   
-  -- Bellow we have denotable, not expressible values
-  | Resume Suspended
+  -- Bellow we have denotable, but not expressible values
+  | Resume (Kont Value)
   | Halted ChanID
   | Waiting ChanID              
 
 
--- Some useful instances
+----- Some useful instances -----
 
 instance Eq Value where
   IntVal a == IntVal b         = a == b
@@ -110,11 +107,11 @@ instance Show Value where
   show (Halted _)         = error "*Halted* should not be printed"
   show (Resume _)         = error "*Resume* should not be printed"
 
--- Evaluator
+---------------------------- Start of evaluator ----------------------------
 
 eval :: Expr -> Env -> Kont Value
 
--------------------------- Basics
+----- Basics -----
 eval (Number n) _ = return (IntVal n)
 
 eval (Variable v) env = return (find env v)
@@ -140,9 +137,8 @@ eval (Pipe e1 e2) env =
 eval (Let d e1) env =
   do env' <- elab d env 
      eval e1 env'
---------------------------
 
--------------------------- Pattern matching
+----- Pattern matching -----
 eval (Injector name args) env = 
   do vs <- values evs 
      return $ Injection name vs
@@ -153,9 +149,8 @@ eval (Match ex pats) env =
      case trymatch v pats env of
        Just (pex, env') -> eval pex env'
        Nothing          -> return $ Injection "ExcMatch" []
---------------------------
 
--------------------------- Concurrency
+----- Concurrency -----
 eval (Send ce ve) env =
   do v <- eval (SendP ce ve) env
      case v of 
@@ -238,9 +233,8 @@ eval (Close c) env =
         WW rk        -> put l (Ready (rk (Exception (Injection "ExcClosed" [])))
                                      Closed)
     return Unit
-------------------------------
 
------------------------------- Exception handling
+----- Exception handling -----
 eval (TryCatch ex pats) env =   
   do 
     -- First we delimit the context in which we evaluate the expression. If 
@@ -261,9 +255,8 @@ eval (Throw th) env =
      case v of
        Injection n vs -> return $ Exception v
        _              -> error "Must throw a sum type"
-------------------------------
 
------------------------------- Primitive operations
+----- Primitive operations -----
 eval (BinPrim bop e1 e2) env = case bop of
   Plus -> arithmeticBOP (+) e1 e2 env
   Minus -> arithmeticBOP (-) e1 e2 env
@@ -281,10 +274,10 @@ eval (MonPrim mop e) env =
     Neg -> 
       do IntVal n <- eval e env 
          return $ IntVal (-n)
+-----
 
 -- Helper functions that abstract the pattern of evaluation for 
 -- binary primitive operations
-
 arithmeticBOP :: (Integer -> Integer -> Integer) -> 
                  Expr -> Expr -> Env -> Kont Value
 arithmeticBOP op e1 e2 env = 
@@ -298,9 +291,8 @@ logicBOP funcop e1 e2 env =
   do BoolVal b1 <- eval e1 env 
      BoolVal b2 <- eval e2 env 
      return $ BoolVal (funcop b1 b2)
-------------------------------
 
--- Environment expansion
+----- Environment expansion -----
 elab :: Defn -> Env -> Kont Env
 elab (Val x e) env =
   do v <- eval e env 
@@ -312,7 +304,7 @@ elab (Rec x e) env =
     _ -> error "RHS of letrec must be a lambda"
 elab (Data _ ctors) env = foldM (\ env' cdef -> elab cdef env') env ctors
 
--- Scheduler
+----- Scheduler -----
 scheduler :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
 scheduler ([], rs) w = if w == 0 
                        then 
@@ -331,7 +323,7 @@ scheduler ((k:ks), rs) w = k >>= (\v -> case v of
     v            -> scheduler (ks, (return v:rs)) w
   )
 
--- Helpers
+----- Helpers -----
 
 values :: [Kont Value] -> Kont [Value]
 values [] = return []
@@ -356,10 +348,11 @@ trydefine (Injection n' vals) (VarCtor n vars) env =
   else Nothing
 trydefine a b c = error (show a ++ show b)
 
+---------------------------- End of evaluator ----------------------------
+
 -- Initial environment, which only exposes primitive data
 -- We deal with primitive operations during parsing, by converting them into
 -- non-application expressions, similar to OCaml
-
 init_env :: Env
 init_env =
   make_env [
@@ -375,8 +368,9 @@ init_env =
 init_cst :: CST
 init_cst = CST empty_cst  
 
--- Deal with top-state exprs and defs. Observe the nice compositionality for
--- that happens when we run the computations.
+-- Deal with top-state exprs and defs. Observe the nice compositionality: 
+-- first run the (continuation) computation to produce a state computation,
+-- which when ran produces the new state, together with the desired result.
 obey :: Phrase -> ProgState -> (String, ProgState)
 obey (Calculate exp) (env, mem) =
   let (v, mem') = (runS . runCC) (pushPrompt pX (eval exp env)) mem in 
