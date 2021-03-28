@@ -6,8 +6,7 @@ uc = (print =<<) . runCC $
   
 sdc = (print =<<) . runCC $
   incr 100 . pushPrompt p2R $
-  incr 2 . pushPrompt p2L $ 
-  incr 200 . shiftP p2L $ \tk -> shiftP p2R $ \lk -> return 3
+  incr 2 . shiftP p2R $ \lk -> return 3
 
 ddc = (print =<<) . runCC $
   incr 100 . pushPrompt p2R $

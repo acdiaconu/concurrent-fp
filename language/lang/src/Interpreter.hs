@@ -22,7 +22,6 @@ import Debug.Trace
 --       algebraic effects (i.e. create a class for state as a first step)
 
 ----- State monad -----
-
 newtype State s a = State { runS :: s -> (a, s) }
 
 instance Monad (State s) where
@@ -44,7 +43,6 @@ instance MonadFail (State s) where
   fail = error "state matching failed"
 
 ----- Operations for the state monad -----
-
 get :: ChanID -> State CST (CType Value (Kont Value))
 get l = State $ \(CST chs) -> (contents chs l, CST chs)
 
@@ -59,8 +57,8 @@ type Env       = Environment Value
 
 newtype CST    = CST (ChanState Value (Kont Value))
 
-type Kont      = CC PromptCX (State CST)
-type PromptCX  = P2 Value Value
+type Kont      = CC PromptT (State CST)
+type PromptT   = P2 Value Value
 type ProgState = (Env, CST)
 type Arg       = String
 type Name      = String
@@ -83,7 +81,6 @@ data Value =
 
 
 ----- Some useful instances -----
-
 instance Eq Value where
   IntVal a == IntVal b         = a == b
   BoolVal a == BoolVal b       = a == b
@@ -94,7 +91,7 @@ instance Eq Value where
 instance Show Value where
   show (IntVal n)          = show n
   show (BoolVal b)         = if b then "true" else "false"
-  show (ChanHandle a)     = "<handle " ++ show a ++ ">"
+  show (ChanHandle a)      = "<handle " ++ show a ++ ">"
   show (Closure _ _ _)     = "<fundef>"
   show (Exception v )      = "<unhandled exception -> " ++ show v ++ ">"
   show (Tuple vs)          = "(" ++ intercalate "," (map show vs) ++ ")"
@@ -103,9 +100,9 @@ instance Show Value where
                              then name
                              else name ++ " " ++ intercalate " " (map show vs)
 
-  show (Waiting _)        = error "*Waiting* should not be printed"
-  show (Halted _)         = error "*Halted* should not be printed"
-  show (Resume _)         = error "*Resume* should not be printed"
+  show (Waiting _)         = error "*Waiting* should not be printed"
+  show (Halted _)          = error "*Halted* should not be printed"
+  show (Resume _)          = error "*Resume* should not be printed"
 
 ---------------------------- Start of evaluator ----------------------------
 
@@ -274,7 +271,6 @@ eval (MonPrim mop e) env =
     Neg -> 
       do IntVal n <- eval e env 
          return $ IntVal (-n)
------
 
 -- Helper functions that abstract the pattern of evaluation for 
 -- binary primitive operations
@@ -324,7 +320,6 @@ scheduler ((k:ks), rs) w = k >>= (\v -> case v of
   )
 
 ----- Helpers -----
-
 values :: [Kont Value] -> Kont [Value]
 values [] = return []
 values (c:cvs) = 
