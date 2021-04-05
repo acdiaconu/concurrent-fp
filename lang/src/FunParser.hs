@@ -112,24 +112,18 @@ p_eqn =
   <+> do x <- p_name; xs <- p_formals; eat EQUAL; e <- p_expr; 
          return (x, nested_lam xs e)
 
--- TODO: add prefix for constructor to be data name
-
-p_seqdef = do x <- p_name; xs <- p_formals; eat EQUAL; 
-              ctors <- p_seq $ p_ctor xs; 
+p_seqdef = do x <- p_name; eat EQUAL; 
+              ctors <- p_seq $ p_ctor; 
               return (x, ctors)
 
-p_ctor allowed = do x <- p_name; xs <- p_formals; eat VBAR;
-                    case isSubsetOf (fromList xs) (fromList allowed) of
-                      False -> p_fail
-                      True -> let args = genArgs (length xs) in 
+p_ctor = do x <- p_name; arity <- p_number; eat VBAR;
+                    let args = genArgs arity in 
                                 return (Val x (nested_lam args (Injector x (map Variable args))))
-  <+> do x <- p_name; xs <- p_formals;
-                    case isSubsetOf (fromList xs) (fromList allowed) of
-                      False -> p_fail
-                      True -> let args = genArgs (length xs) in 
+  <+> do x <- p_name; arity <- p_number;
+                    let args = genArgs arity in 
                                 return (Val x (nested_lam args (Injector x (map Variable args))))
 
-genArgs n = take n (map (\n -> "x" ++ show n) [1 ..]) 
+genArgs n = take (fromIntegral n) (map (\n -> "x" ++ show n) [1 ..]) 
 
 nested_lam :: [Ident] -> Expr -> Expr
 nested_lam [x] e = Lambda x e

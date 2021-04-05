@@ -74,7 +74,7 @@ data Value =
   | Tuple [Value]
   | Exception Value
   
-  -- Bellow we have denotable, but not expressible values
+  -- Below we have denotable but not expressible values
   | Resume (Kont Value)
   | Halted ChanID
   | Waiting ChanID              
@@ -373,4 +373,4 @@ obey (Calculate exp) (env, mem) =
 obey (Define def) (env, mem) =
   let x = def_lhs def in
   let (env', mem') = (runS . runCC) (elab def env) mem in 
-  (print_defn env' x, (env', mem'))
+  ({-print_defn env' x-}"", (env', mem'))
