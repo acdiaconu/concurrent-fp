@@ -400,4 +400,4 @@ obey (Calculate exp) (env, mem) =
 obey (Define def) (env, mem) =
   let x = def_lhs def in
   let (env', mem') = (runS . runCC) (elab def env) mem in 
-  ({-print_defn env' x-}"", (env', mem'))
+  ("Added definition: " ++ x, (env', mem'))
