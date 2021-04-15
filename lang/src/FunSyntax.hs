@@ -17,7 +17,8 @@ data Expr =
   | MonPrim MOP Expr
   | Injector String [Expr]
   | Let Defn Expr
-  | Match Expr [Pattern]
+  | Match Expr [Expr]
+  | Case Expr Expr
   | Pipe Expr Expr		      
   | Parallel [Expr]
   | Send Expr Expr
@@ -26,16 +27,12 @@ data Expr =
   | ReceiveP Expr
   | NewChan
   | Close Expr
-  | TryCatch Expr [Pattern]
+  | TryCatch Expr [Expr]
   | Throw Expr
   deriving Show
 
 data BOP = Plus | Minus | Times | Div | Mod | Equal | And | Or deriving Show
 data MOP = Neg deriving Show
-
-data Pattern = Pattern VarCtor Expr deriving Show
-
-data VarCtor = VarCtor Ident [Ident] deriving Show
 
 data Defn =                  
     Val Ident Expr           

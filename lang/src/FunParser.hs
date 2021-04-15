@@ -142,13 +142,10 @@ p_expr =
          return (TryCatch ex pats)
   <+> p_par
 
-p_pattern = do p <- p_patctor; eat ARROW; ex <- p_expr; eat VBAR;
-               return (Pattern p ex)
-  <+> do p <- p_patctor; eat ARROW; ex <- p_expr; 
-         return (Pattern p ex)
-
-p_patctor = do ct <- p_name; vars <- p_seq p_name; 
-               return (VarCtor ct vars) 
+p_pattern = do p <- p_expr; eat ARROW; ex <- p_expr; eat VBAR;
+               return (Case p ex)
+  <+> do p <- p_expr; eat ARROW; ex <- p_expr; 
+         return (Case p ex)
 
 p_par =
   do es <- p_list p_cond PAR; 

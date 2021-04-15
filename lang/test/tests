@@ -38,3 +38,7 @@ val main =
     client c 0 || server c 0 ;;
 
 main;;
+
+---------- Pattern matching ----------
+data A = B 1 | C 2;;
+match C (B (C 4 3)) 4 with C (C x q) y => x | C (B (C x y)) z => x;;

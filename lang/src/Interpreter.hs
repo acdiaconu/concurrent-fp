@@ -143,7 +143,7 @@ eval (Injector name args) env =
 
 eval (Match ex pats) env = 
   do v <- eval ex env 
-     case trymatch v pats env of
+     case matchpat v pats env of
        Just (pex, env') -> eval pex env'
        Nothing          -> return $ Injection "ExcMatch" []
 
@@ -240,7 +240,7 @@ eval (TryCatch ex pats) env =
     val <- pushPrompt pX (eval ex env)
     -- Check whether we have ended with an exception or not.
     case val of
-      Exception e -> case trymatch e pats env of
+      Exception e -> case matchpat e pats env of
                       Just (pex, env') -> eval pex env'
                       -- If no handler handles our error, propagate
                       Nothing          -> shift pX $ \_ -> return $ Exception e
@@ -327,21 +327,31 @@ values (c:cvs) =
      vs <- values cvs 
      return (v:vs)
 
--- TODO: Lazyness makes it seem like undefined exception are fine, 
---       since they are not evaluated
-trymatch :: Value -> [Pattern] -> Env -> Maybe (Expr, Env)
-trymatch v [] env = Nothing
-trymatch v ((Pattern patCtor pex):ps) env = 
-  case (trydefine v patCtor env) of
-    Just env' -> Just (pex, env')
-    Nothing   -> trymatch v ps env
+-- TODO: Fix no error when undefined exception because of lazyness
+-- Expr for the following two functions is a pattern (leaves are variables)
+matchpat :: Value -> [Expr] -> Env -> Maybe (Expr, Env)
+matchpat v [] env = Nothing
+matchpat v ((Case pat ex):ps) env = 
+  case (trymatch v pat env) of
+    Just env' -> Just (ex, env')
+    Nothing   -> matchpat v ps env
+        
+trymatch :: Value -> Expr -> Env -> Maybe Env
+trymatch v (Variable i) env = Just $ define env i v
+trymatch (Injection n vs) pat env =
+    if n == n' 
+    then accumBindings vs ps env
+    else Nothing
+  where (Injector n' ps) = appToInj pat []
+trymatch a b _ = error $ show a ++ show b
 
-trydefine :: Value -> VarCtor -> Env -> Maybe Env
-trydefine (Injection n' vals) (VarCtor n vars) env =
-  if n == n'
-  then Just $ defargs env vars vals
-  else Nothing
-trydefine a b c = error (show a ++ show b)
+accumBindings [] [] env = Just env
+accumBindings (v:vs) (p:ps) env = case trymatch v p env of
+  Just env' -> accumBindings vs ps env'
+  Nothing   -> Nothing 
+
+appToInj (Apply (Variable v) x) ps = Injector v (x:ps)
+appToInj (Apply x y) ps = appToInj x (y:ps)
 
 ---------------------------- End of evaluator ----------------------------
 
