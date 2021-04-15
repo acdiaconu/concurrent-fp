@@ -63,6 +63,10 @@ type ProgState = (Env, CST)
 type Arg       = String
 type Name      = String
 
+-- Patterns in our language are Expressions themselves; see the comment
+-- for the `matchPat' function
+type Pattern   = Expr
+
 ----- Value domain-----
 data Value =
     Unit
@@ -329,27 +333,40 @@ values (c:cvs) =
 
 -- TODO: Fix no error when undefined exception because of lazyness
 -- Expr for the following two functions is a pattern (leaves are variables)
-matchpat :: Value -> [Expr] -> Env -> Maybe (Expr, Env)
+-- Note: while Pattern in the signatures below is a type synonym for Expr, 
+-- we require that it is restricted to `Variable' and `Apply ...', where the
+-- `Apply' would yield an injection. This could have been handled in a 
+-- cleaner manner, but for ease of understanding we have imposed this 
+-- "soft" restriction.  
+matchpat :: Value -> [Pattern] -> Env -> Maybe (Expr, Env)
 matchpat v [] env = Nothing
 matchpat v ((Case pat ex):ps) env = 
   case (trymatch v pat env) of
     Just env' -> Just (ex, env')
     Nothing   -> matchpat v ps env
-        
-trymatch :: Value -> Expr -> Env -> Maybe Env
+
+-- The following two mutually recursive functions try
+-- to recursively match patterns, so we can match arbitrary 
+-- deep patterns
+trymatch :: Value -> Pattern -> Env -> Maybe Env
 trymatch v (Variable i) env = Just $ define env i v
 trymatch (Injection n vs) pat env =
     if n == n' 
     then accumBindings vs ps env
     else Nothing
-  where (Injector n' ps) = appToInj pat []
+  where 
+    -- We transform the application to an injection for ease
+    Injector n' ps = appToInj pat [] 
 trymatch a b _ = error $ show a ++ show b
 
+accumBindings :: [Value] -> [Pattern] -> Env -> Maybe Env
 accumBindings [] [] env = Just env
 accumBindings (v:vs) (p:ps) env = case trymatch v p env of
   Just env' -> accumBindings vs ps env'
   Nothing   -> Nothing 
 
+-- Helper function that 
+appToInj :: Expr -> [Expr] -> Expr
 appToInj (Apply (Variable v) x) ps = Injector v (x:ps)
 appToInj (Apply x y) ps = appToInj x (y:ps)
 
