@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: f4ff21b46c675c6877d61b3b22315c80340d60194662a4098615d2a4b270cb96
+-- hash: d4f680cc4b26e1de6bb144c0afc2e62e81b9decc719935d36af0a324a400a704
 
 name:           lang
 version:        0.1.0.0
@@ -34,15 +34,17 @@ library
       FunSyntax
       Interpreter
       Parsing
+      TreeUtils
   other-modules:
       Paths_lang
   hs-source-dirs:
       src
   build-depends:
-      CC-delcont
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
+    , fclabels >2
     , mtl
+    , rosezipper
     , unix
   default-language: Haskell2010
 
@@ -54,11 +56,12 @@ executable lang-exe
       app
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      CC-delcont
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
+    , fclabels >2
     , lang
     , mtl
+    , rosezipper
     , unix
   default-language: Haskell2010
 
@@ -71,10 +74,11 @@ test-suite lang-test
       test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      CC-delcont
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
+    , fclabels >2
     , lang
     , mtl
+    , rosezipper
     , unix
   default-language: Haskell2010

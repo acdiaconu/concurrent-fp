@@ -23,8 +23,10 @@ dependencies:
 - base >= 4.7 && < 5
 - containers
 - unix
-- CC-delcont >= 0
+- fclabels > 2
+- rosezipper
 - mtl
+
 
 library:
   source-dirs: src

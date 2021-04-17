@@ -35,7 +35,7 @@ packages:
 # forks / in-progress versions pinned to a git hash. For example:
 #
 extra-deps:
-- CC-delcont-0.2.1.0@sha256:3791184e55c0f59549443f8dde86131b3479f7eb4b540549aceff6db2b2e3006,2276
+- fclabels-2.0.5@sha256:817006077632bd29e637956154aa33d3c10a59be0791c308cef955eb951b2675,4473
 # - acme-missiles-0.3
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a

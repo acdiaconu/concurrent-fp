@@ -3,7 +3,21 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    hackage: fclabels-2.0.3.3@sha256:9fc5d1e4466c400710d3a1d59e8cad4e659883da1f56ad4c491c52f9080ef626,4438
+    pantry-tree:
+      size: 1008
+      sha256: ec4f38305b9d657ac197a6160212d504f2b4da910c4f1d82ddb4e92dc3d02b0e
+  original:
+    hackage: fclabels-2.0.3.3@sha256:9fc5d1e4466c400710d3a1d59e8cad4e659883da1f56ad4c491c52f9080ef626,4438
+- completed:
+    hackage: rosezipper-0.2@sha256:aeff4e712360c5665747905381982a0765ba2c3831e352e8caeb951fc8c107b7,550
+    pantry-tree:
+      size: 213
+      sha256: f2dc5b8e64cc401a763a168b777783f86e6ebf69f4f55ec52b5f2628271a93af
+  original:
+    hackage: rosezipper-0.2
 snapshots:
 - completed:
     size: 533053

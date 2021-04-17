@@ -42,3 +42,27 @@ main;;
 ---------- Pattern matching ----------
 data A = B 1 | C 2;;
 match C (B (C 4 3)) 4 with C (C x q) y => x | C (B (C x y)) z => x;;
+
+
+--- Expected ---
+-- Added definition: x
+-- (23,2,unit)
+-- Added definition: x
+-- 234
+-- <unhandled exception -> ExcClosed>
+-- Added definition: x
+-- <unhandled exception -> ExcClosed>
+-- Added definition: c
+-- (5,2,unit)
+-- Added definition: x
+-- Added definition: y
+-- <unhandled exception -> ExcClosed>
+-- Added definition: x
+-- Added definition: y
+-- (unit,2,2)
+-- Added definition: server
+-- Added definition: client
+-- Added definition: main
+-- (unit,1000)
+-- Added definition: A
+-- 4

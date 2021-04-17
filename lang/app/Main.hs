@@ -6,4 +6,4 @@ import FunParser
 import Parsing
 
 main :: IO ()
-main = dialog funParser obey (init_env, init_cst)
+main = dialog funParser obey (init_env, init_gs)

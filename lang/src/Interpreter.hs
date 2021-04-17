@@ -1,71 +1,41 @@
 {- 
   Monadic definitional interpreter.
 -}
+{-# LANGUAGE TemplateHaskell, TypeOperators #-}
 
-module Interpreter(obey, init_cst, init_env) where
+module Interpreter(obey, init_gs, init_env) where
 
 import Parsing
 import FunSyntax
 import FunParser
 import Environment
 import CState
+import TreeUtils
 
 import Data.List (intercalate)
 
+import Data.Label
+import Data.Label.Monadic
+
 import Control.Monad
+import Control.Monad.State
 import Control.Monad.Trans (lift)
 import CCExc
 
 import Debug.Trace
 
--- TODO: A more algebraic approach, to allow easy combination of ``pure"
---       algebraic effects (i.e. create a class for state as a first step)
-
------ State monad -----
-newtype State s a = State { runS :: s -> (a, s) }
-
-instance Monad (State s) where
-  return a = State $ \s -> (a, s)
-  (State sm) >>= f = State $ \s -> 
-    let (a, newS) = sm s
-        (State rs) = f a 
-    in rs newS
-
-instance Functor (State s) where
-  fmap f (State m) = State $ \s -> 
-    let (a, newS) = m s
-    in (f a, newS)
-
-instance Applicative (State s) where
-  pure = return
-
-instance MonadFail (State s) where
-  fail = error "state matching failed"
-
------ Operations for the state monad -----
-get :: ChanID -> State CST (CType Value (Kont Value))
-get l = State $ \(CST chs) -> (contents chs l, CST chs)
-
-put :: ChanID -> CType Value (Kont Value) -> State CST ()
-put l ct = State $ \(CST chs) -> ((), CST $ update chs l ct)
-
-new :: State CST ChanID
-new = State $ \(CST chs) -> let (l, chs') = fresh chs in (l, CST chs')
-
 ----- Helper types -----
-type Env       = Environment Value
+type Env          = Environment Value
 
-newtype CST    = CST (ChanState Value (Kont Value))
-
-type Kont      = CC PromptT (State CST)
-type PromptT   = P2 Value Value
-type ProgState = (Env, CST)
-type Arg       = String
-type Name      = String
+type Kont         = CC PromptT (State GlobState)
+type PromptT      = P2 Value Value
+type ProgState    = (Env, GlobState)
+type Arg          = String
+type Name         = String
 
 -- Patterns in our language are Expressions themselves; see the comment
 -- for the `matchPat' function
-type Pattern   = Expr
+type Pattern      = Expr
 
 ----- Value domain-----
 data Value =
@@ -81,9 +51,26 @@ data Value =
   -- Below we have denotable but not expressible values
   | Resume (Kont Value)
   | Halted ChanID
-  | Waiting ChanID              
+  | Waiting ChanID
 
+----- State and its labels (lens-ish) -----
+data GlobState = GlobState { _cst   :: ChanState Value (Kont Value), 
+                             _sched :: Int }
 
+-- TH creates labels for us (`cst' and `sched')
+mkLabel ''GlobState
+
+----- Operations for the state monad -----  
+getCh :: ChanID -> State GlobState (CType Value (Kont Value))
+getCh l = do cs <- Data.Label.Monadic.gets cst
+             return (contents cs l) 
+
+modifyCh :: ChanID -> CType Value (Kont Value) -> State GlobState ()
+modifyCh l ct = Data.Label.Monadic.modify cst (\gs -> update gs l ct)
+
+putCh :: State GlobState ChanID
+putCh = Data.Label.Monadic.modifyAndGet cst fresh
+         
 ----- Some useful instances -----
 instance Eq Value where
   IntVal a == IntVal b         = a == b
@@ -145,9 +132,9 @@ eval (Injector name args) env =
      return $ Injection name vs
   where evs = map (`eval` env) args
 
-eval (Match ex pats) env = 
+eval (Match ex cases) env = 
   do v <- eval ex env 
-     case matchpat v pats env of
+     case matchpat v cases env of
        Just (pex, env') -> eval pex env'
        Nothing          -> return $ Injection "ExcMatch" []
 
@@ -164,23 +151,23 @@ eval (SendP ce ve) env =
     ChanHandle l <- eval ce env 
     v <- eval ve env 
     sus <- lift $ -- descend to the state monad, to see if we suspend or not
-      get l >>= \ chanState -> 
+      getCh l >>= \ chanState -> 
         -- based on the state, we decide what the next state is
         case chanState of 
           Empty -> 
-            do put l (WR v rest)
+            do modifyCh l (WR v rest)
                return $ Halted l
           Ready res _ -> 
-            do put l $ Ready res (WR v rest)
+            do modifyCh l $ Ready res (WR v rest)
                return $ Halted l
           WW rk -> 
-            do put l $ Ready (rk v) Empty
+            do modifyCh l $ Ready (rk v) Empty
                return $ Resume (rest Unit)
           Closed -> 
             return (Resume $ rest (Exception $ Injection "ExcClosed" []))
     case sus of 
       Resume res -> res              -- resume execution, no scheduler involved
-      Halted init_cst -> return sus  -- return to scheduler
+      Halted _   -> return sus       -- return to scheduler
 
 -- The code for Receive is almost identical to the one for Send
 eval (Receive ce) env =
@@ -194,16 +181,16 @@ eval (ReceiveP ce) env =
   do 
     ChanHandle l <- eval ce env
     sus <- lift $ 
-      get l >>= \ chanState -> 
+      getCh l >>= \ chanState -> 
         case chanState of 
           Empty -> 
-            do put l (WW rest)
+            do modifyCh l (WW rest)
                return $ Halted l
           Ready res _ -> 
-            do put l $ Ready res (WW rest)
+            do modifyCh l $ Ready res (WW rest)
                return $ Halted l
           WR v sk -> 
-            do put l (Ready (sk Unit) Empty) 
+            do modifyCh l (Ready (sk Unit) Empty) 
                return (Resume $ rest v)
           Closed -> 
             return (Resume $ rest (Exception $ Injection "ExcClosed" []))
@@ -217,21 +204,21 @@ eval (Parallel cs) env = scheduler (components, []) 0
 
 eval NewChan env = 
   lift $  
-  do l <- new 
-     put l Empty
+  do l <- putCh 
+     modifyCh l Empty
      return $ ChanHandle l
 
 eval (Close c) env = 
   do
     ChanHandle l <- eval c env
     lift $ 
-      get l >>= \ chanState -> case chanState of 
-        Empty        -> put l Closed
+      getCh l >>= \ chanState -> case chanState of 
+        Empty        -> modifyCh l Closed
         Closed       -> error "already closed"
-        Ready res _  -> put l (Ready res Closed)
-        WR _ wk      -> put l (Ready (wk (Exception (Injection "ExcClosed" [])))
+        Ready res _  -> modifyCh l (Ready res Closed)
+        WR _ wk      -> modifyCh l (Ready (wk (Exception (Injection "ExcClosed" [])))
                                      Closed)
-        WW rk        -> put l (Ready (rk (Exception (Injection "ExcClosed" [])))
+        WW rk        -> modifyCh l (Ready (rk (Exception (Injection "ExcClosed" [])))
                                      Closed)
     return Unit
 
@@ -308,13 +295,13 @@ elab (Data _ ctors) env = foldM (\ env' cdef -> elab cdef env') env ctors
 scheduler :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
 scheduler ([], rs) w = if w == 0 
                        then 
-                        do vs <- values rs
-                           return $ Tuple (reverse vs)
+                         do vs <- values rs
+                            return $ Tuple (reverse vs)
                        else scheduler (reverse rs, []) w
 scheduler ((k:ks), rs) w = k >>= (\v -> case v of 
     Halted l     -> scheduler (ks, (return $ Waiting l):rs) (w + 1)
-    Waiting l    -> lift (get l >>= (\cst -> case cst of 
-                      Ready sk next -> put l next >>= (\() -> return $ Left sk)
+    Waiting l    -> lift (getCh l >>= (\chs -> case chs of 
+                      Ready sk next -> modifyCh l next >>= (\() -> return $ Left sk)
                       _             -> return $ Right (return $ Waiting l)
                     )) >>= (\val -> case val of 
                       Left r -> scheduler ((r:ks), rs) (w - 1)
@@ -332,6 +319,7 @@ values (c:cvs) =
      return (v:vs)
 
 -- TODO: Fix no error when undefined exception because of lazyness
+
 -- Expr for the following two functions is a pattern (leaves are variables)
 -- Note: while Pattern in the signatures below is a type synonym for Expr, 
 -- we require that it is restricted to `Variable' and `Apply ...', where the
@@ -387,17 +375,17 @@ init_env =
     ("ExcInvalid", Injection "ExcInvalid" []),
     ("ExcMatch", Injection "ExcMatch" [])]
 
-init_cst :: CST
-init_cst = CST empty_cst  
+init_gs :: GlobState
+init_gs = GlobState {_cst = empty_cst, _sched = 0}
 
 -- Deal with top-state exprs and defs. Observe the nice compositionality: 
 -- first run the (continuation) computation to produce a state computation,
 -- which when ran produces the new state, together with the desired result.
 obey :: Phrase -> ProgState -> (String, ProgState)
 obey (Calculate exp) (env, mem) =
-  let (v, mem') = (runS . runCC) (pushPrompt pX (eval exp env)) mem in 
+  let (v, mem') = (runState . runCC) (pushPrompt pX (eval exp env)) mem in 
   (show v, (env, mem'))
 obey (Define def) (env, mem) =
   let x = def_lhs def in
-  let (env', mem') = (runS . runCC) (elab def env) mem in 
+  let (env', mem') = (runState . runCC) (elab def env) mem in 
   ("Added definition: " ++ x, (env', mem'))

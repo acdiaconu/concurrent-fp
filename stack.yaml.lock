@@ -5,12 +5,12 @@
 
 packages:
 - completed:
-    hackage: CC-delcont-0.2.1.0@sha256:3791184e55c0f59549443f8dde86131b3479f7eb4b540549aceff6db2b2e3006,2276
+    hackage: fclabels-2.0.5@sha256:817006077632bd29e637956154aa33d3c10a59be0791c308cef955eb951b2675,4473
     pantry-tree:
-      size: 481
-      sha256: 5bd0b5b5318c0ca1707316b138faa323dea5c198ca339d7f00286b50a37cdccb
+      size: 1008
+      sha256: 8a9254b7f80c3586d6e51d35c1355e700c3f9b0b3d8e3ae6e6ab939580188e1b
   original:
-    hackage: CC-delcont-0.2.1.0@sha256:3791184e55c0f59549443f8dde86131b3479f7eb4b540549aceff6db2b2e3006,2276
+    hackage: fclabels-2.0.5@sha256:817006077632bd29e637956154aa33d3c10a59be0791c308cef955eb951b2675,4473
 snapshots:
 - completed:
     size: 533053

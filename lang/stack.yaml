@@ -34,8 +34,9 @@ packages:
 # These entries can reference officially published versions as well as
 # forks / in-progress versions pinned to a git hash. For example:
 #
-# extra-deps:
-# - acme-missiles-0.3
+extra-deps:
+- fclabels-2.0.3.3@sha256:9fc5d1e4466c400710d3a1d59e8cad4e659883da1f56ad4c491c52f9080ef626,4438
+- rosezipper-0.2
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
