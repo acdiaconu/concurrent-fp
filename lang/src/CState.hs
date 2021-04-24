@@ -20,28 +20,28 @@ data CType v k = Empty
 -- Our state will contain two pieces of information:
 --   * an integer used for unique IDs
 --   * a mapping from channel IDs to they channel type
-newtype ChanState v k = Mem (Integer, Map.Map Integer (CType v k))
+newtype ChanState v k = CS (Integer, Map.Map Integer (CType v k))
 
 empty_cst :: ChanState v k
-empty_cst = Mem (0, Map.empty)
+empty_cst = CS (0, Map.empty)
 
 ----- Operations on the channel state -----
 
 -- Gets the content of a channel from the state
 contents :: ChanState v k -> ChanID -> CType v k
-contents (Mem (n, s)) (ChanID u) = 
+contents (CS (n, s)) (ChanID u) = 
   case Map.lookup u s of
     Just chs -> chs
     Nothing -> error ("non-existent location " ++ show u)
 
 -- Updates the specified channel to the given new type
 update :: ChanState v k -> ChanID -> CType v k -> ChanState v k
-update (Mem (n, s)) (ChanID u) chs = 
+update (CS (n, s)) (ChanID u) chs = 
   case Map.lookup u s of
-    Just _ -> Mem (n, Map.insert u chs s)
+    Just _ -> CS (n, Map.insert u chs s)
     Nothing -> error ("non-existent location " ++ show u)
 
 -- Creates a new channel and returns its handler, 
 -- together with the update state
 fresh :: ChanState v k -> (ChanID, ChanState v k)
-fresh (Mem (n, s)) = (ChanID n, Mem (n+1, Map.insert n Empty s))
+fresh (CS (n, s)) = (ChanID n, CS (n+1, Map.insert n Empty s))

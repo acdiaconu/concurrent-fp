@@ -11,6 +11,7 @@ import FunParser
 import Environment
 import CState
 import TreeUtils
+import Scheduler
 
 import Data.List (intercalate)
 
@@ -55,7 +56,7 @@ data Value =
 
 ----- State and its labels (lens-ish) -----
 data GlobState = GlobState { _cst   :: ChanState Value (Kont Value), 
-                             _sched :: Int }
+                             _sched :: SchedulerST Value (Kont Value) }
 
 -- TH creates labels for us (`cst' and `sched')
 mkLabel ''GlobState
@@ -136,13 +137,22 @@ eval (Match ex cases) env =
   do v <- eval ex env 
      case matchpat v cases env of
        Just (pex, env') -> eval pex env'
-       Nothing          -> return $ Injection "ExcMatch" []
+       Nothing          -> shift pX $ \_ -> return (Exception $ Injection "ExcMatch" [])
 
 ----- Concurrency -----
 eval (Send ce ve) env =
   do v <- eval (SendP ce ve) env
      case v of 
-       Exception _ -> shift pX $ \_ -> return v
+       -- *** 
+       Exception _ -> shift pX $ \_ -> return v -- error happened when running
+                                                -- the leaf in focus, so in
+                                                -- addition this needs to be 
+                                                -- reflected in the tree as well
+                                                -- this is done by finding the
+                                                -- closest exception ancestor
+                                                -- and discarding its subtree, 
+                                                -- while replacing the exception
+                                                -- node with the handler kont
        _           -> return v
 
 eval (SendP ce ve) env = 
@@ -222,6 +232,7 @@ eval (Close c) env =
                                      Closed)
     return Unit
 
+-- *** Here, as before, we need to go the closes Exception ancestor.
 ----- Exception handling -----
 eval (TryCatch ex pats) env =   
   do 
@@ -291,25 +302,6 @@ elab (Rec x e) env =
     _ -> error "RHS of letrec must be a lambda"
 elab (Data _ ctors) env = foldM (\ env' cdef -> elab cdef env') env ctors
 
------ Scheduler -----
-scheduler :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
-scheduler ([], rs) w = if w == 0 
-                       then 
-                         do vs <- values rs
-                            return $ Tuple (reverse vs)
-                       else scheduler (reverse rs, []) w
-scheduler ((k:ks), rs) w = k >>= (\v -> case v of 
-    Halted l     -> scheduler (ks, (return $ Waiting l):rs) (w + 1)
-    Waiting l    -> lift (getCh l >>= (\chs -> case chs of 
-                      Ready sk next -> modifyCh l next >>= (\() -> return $ Left sk)
-                      _             -> return $ Right (return $ Waiting l)
-                    )) >>= (\val -> case val of 
-                      Left r -> scheduler ((r:ks), rs) (w - 1)
-                      Right r -> scheduler (ks, (r:rs)) w
-                    )
-    v            -> scheduler (ks, (return v:rs)) w
-  )
-
 ----- Helpers -----
 values :: [Kont Value] -> Kont [Value]
 values [] = return []
@@ -317,8 +309,6 @@ values (c:cvs) =
   do v <- c 
      vs <- values cvs 
      return (v:vs)
-
--- TODO: Fix no error when undefined exception because of lazyness
 
 -- Expr for the following two functions is a pattern (leaves are variables)
 -- Note: while Pattern in the signatures below is a type synonym for Expr, 
@@ -358,6 +348,31 @@ appToInj :: Expr -> [Expr] -> Expr
 appToInj (Apply (Variable v) x) ps = Injector v (x:ps)
 appToInj (Apply x y) ps = appToInj x (y:ps)
 
+-- *** This would not be a scheduler anymore: it will simply become a selector
+-- which adds the latest leaves to the scheduling tree and executes the 
+-- in-focus leaf
+--
+-- Can possibly be made top level?
+
+----- Scheduler -----
+scheduler :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
+scheduler ([], rs) w = if w == 0 
+                       then 
+                         do vs <- values rs
+                            return $ Tuple (reverse vs)
+                       else scheduler (reverse rs, []) w
+scheduler ((k:ks), rs) w = k >>= (\v -> case v of 
+    Halted l     -> scheduler (ks, (return $ Waiting l):rs) (w + 1)
+    Waiting l    -> lift (getCh l >>= (\chs -> case chs of 
+                      Ready sk next -> modifyCh l next >>= (\() -> return $ Left sk)
+                      _             -> return $ Right (return $ Waiting l)
+                    )) >>= (\val -> case val of 
+                      Left r -> scheduler ((r:ks), rs) (w - 1)
+                      Right r -> scheduler (ks, (r:rs)) w
+                    )
+    v            -> scheduler (ks, (return v:rs)) w
+  )
+
 ---------------------------- End of evaluator ----------------------------
 
 -- Initial environment, which only exposes primitive data
@@ -376,14 +391,17 @@ init_env =
     ("ExcMatch", Injection "ExcMatch" [])]
 
 init_gs :: GlobState
-init_gs = GlobState {_cst = empty_cst, _sched = 0}
+init_gs = GlobState {_cst = empty_cst, 
+                     _sched = empty_sched (return $ 
+                                            (Exception $ 
+                                              Injection "ExcInvalid" [])) }
 
 -- Deal with top-state exprs and defs. Observe the nice compositionality: 
 -- first run the (continuation) computation to produce a state computation,
 -- which when ran produces the new state, together with the desired result.
 obey :: Phrase -> ProgState -> (String, ProgState)
 obey (Calculate exp) (env, mem) =
-  let (v, mem') = (runState . runCC) (pushPrompt pX (eval exp env)) mem in 
+  let (v, mem') = (runState . runCC) (pushPrompt pX $ eval exp env) mem in 
   (show v, (env, mem'))
 obey (Define def) (env, mem) =
   let x = def_lhs def in
