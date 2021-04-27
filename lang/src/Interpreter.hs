@@ -355,13 +355,13 @@ appToInj (Apply x y) ps = appToInj x (y:ps)
 -- Can possibly be made top level?
 
 ----- Scheduler -----
-scheduler :: ([Kont Value], [Kont Value]) -> Int -> Kont Value
-scheduler ([], rs) w = if w == 0 
-                       then 
-                         do vs <- values rs
-                            return $ Tuple (reverse vs)
-                       else scheduler (reverse rs, []) w
-scheduler ((k:ks), rs) w = k >>= (\v -> case v of 
+selector :: Kont Value
+selector = lift $ 
+              do crt <- getCrtNode
+                 if (done crt) 
+                 then DONE
+                 else RUN ACTIVE Node and do a case analysys                
+  k >>= (\v -> case v of 
     Halted l     -> scheduler (ks, (return $ Waiting l):rs) (w + 1)
     Waiting l    -> lift (getCh l >>= (\chs -> case chs of 
                       Ready sk next -> modifyCh l next >>= (\() -> return $ Left sk)

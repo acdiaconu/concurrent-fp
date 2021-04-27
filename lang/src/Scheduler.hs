@@ -8,7 +8,7 @@ import Data.Tree.Zipper
 data ComponentState v k = 
     Par (v -> k) -- we feed the tuple value to resume a paralell composition
   | Run k
-  | Exc k
+  | Exc (v -> k)
   | Done v
 
 newtype SchedulerST v k = SchedulerST (TreePos Full (ComponentState v k))
@@ -30,3 +30,4 @@ checkDone = id
 
 nearestExc :: SchedulerST v k -> SchedulerST v k
 nearestExc = id
+
