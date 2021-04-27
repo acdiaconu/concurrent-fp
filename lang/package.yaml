@@ -23,7 +23,6 @@ dependencies:
 - base >= 4.7 && < 5
 - containers
 - unix
-- CC-delcont >= 0
 - mtl
 
 library:

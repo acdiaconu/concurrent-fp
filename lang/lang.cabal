@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: f4ff21b46c675c6877d61b3b22315c80340d60194662a4098615d2a4b270cb96
+-- hash: 474f23fa7b50d41b2d4eca343a82b5b1944a1d363f00f07a15754f73d8664ebd
 
 name:           lang
 version:        0.1.0.0
@@ -39,8 +39,7 @@ library
   hs-source-dirs:
       src
   build-depends:
-      CC-delcont
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
     , mtl
     , unix
@@ -54,8 +53,7 @@ executable lang-exe
       app
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      CC-delcont
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
     , lang
     , mtl
@@ -71,8 +69,7 @@ test-suite lang-test
       test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      CC-delcont
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , containers
     , lang
     , mtl

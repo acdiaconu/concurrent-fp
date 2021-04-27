@@ -1,0 +1,192 @@
+[33mcommit b921caa538d8001fc789b45c280e9c4589ccabf9[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m, [m[1;31mup/master[m[33m)[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Sat Apr 24 14:10:17 2021 +0100
+
+    add pre
+
+[33mcommit a4b40768c490d7c22eda97f079b5afc7b2ac99b2[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Sun Apr 18 00:20:29 2021 +0100
+
+    Added Rose Tree stuff
+
+[33mcommit f9dd880deafaaa555bbc8cfb589900b65913e142[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Thu Apr 15 14:27:43 2021 +0100
+
+    further cleanup
+
+[33mcommit efe7d190c007c0d3be5a22791af751503a84cd89[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Thu Apr 15 14:24:58 2021 +0100
+
+    cleanup
+
+[33mcommit b3fad7476c41e367313493cfc97bc1c88f825690[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Thu Apr 15 14:12:38 2021 +0100
+
+    Fixed pattern matching
+
+[33mcommit b814d972a599eccc799b0878c01a05bbe7f2aaca[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Mon Apr 5 21:16:36 2021 +0100
+
+    fixes
+
+[33mcommit 1371124ea13d7c426d98b39703ac7a408270627f[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Sun Mar 28 02:59:25 2021 +0100
+
+    restructure
+
+[33mcommit 1fb207f1fdf5d32a77e7892db58feb134ca1af3b[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Sun Mar 28 02:53:04 2021 +0100
+
+    further refactor
+
+[33mcommit 1013744919843346455706b4831cbdc3fcdadacc[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Sat Mar 27 21:07:32 2021 +0000
+
+    more refactoring
+
+[33mcommit 04df9313da83af497e120fb4796f67e330388845[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Thu Mar 25 13:52:07 2021 +0000
+
+    even prettier
+
+[33mcommit c10cd6b63a575b5d6c1c67e27ba028e6278a1d44[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Thu Mar 25 13:44:11 2021 +0000
+
+    more refactor
+
+[33mcommit 40fd7343ce9a1f18b6367eb1b8e9ad91fcc1f222[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Wed Mar 24 01:20:33 2021 +0000
+
+    Fixed file reading
+
+[33mcommit f50e22b40f651166535344887b57fab52512b67a[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Tue Mar 23 23:04:33 2021 +0000
+
+    Final, some refactoring
+
+[33mcommit 7bb8c0f05d846a7cb1d8f57e98452895d9b3d193[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Tue Mar 23 17:03:21 2021 +0000
+
+    Final, pre refactor
+
+[33mcommit 5eec472368264fd31555e0ea5c08b799b71890ae[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Tue Mar 23 13:19:56 2021 +0000
+
+    fixed all
+
+[33mcommit 452df886c7154501527877dce2713dc80d370957[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Mon Feb 22 16:56:46 2021 +0000
+
+    custom exc 1.5/2
+
+[33mcommit 2d4fcca9bdf4e7fb6ebfd12e956184c4b4f9a49f[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Mon Feb 22 16:53:42 2021 +0000
+
+    custom exceptions 1/2
+
+[33mcommit c029f6575ad7f7e7f2e6259b492515f4ce86dca0[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Thu Feb 18 21:58:07 2021 +0000
+
+    fixed some parsing stuff
+
+[33mcommit 3dcb9fc1510612e1ecee04856219167f547a8550[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Thu Feb 11 18:27:28 2021 +0000
+
+    added custom data
+
+[33mcommit 4cc5e7286bb53a023afe14d9ed630ea7dad4a901[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Wed Feb 10 17:14:52 2021 +0000
+
+    Channel comm done
+
+[33mcommit bc9f8e0b7bfebafd9a01ced370479a7e14acd2c8[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Sat Feb 6 16:30:05 2021 +0000
+
+    Fixed the inf type problem
+    
+    Used Oleg's implementation, which is much nicer in a lot of ways (most
+    notably you can simply use global prompts, which allows for such a nice
+    way of adding complex control structures). The implementation itself is
+    still a mistery, but I'll crack it eventually. The idea is basically
+    almost the same as Peyton's. Though it is based on resumable exceptions,
+    and not on the continuation monad itself, which might be super
+    interesting, and also super important is the fact that I have a CPS
+    transform of this implementation. I'm sure this will be handy.
+
+[33mcommit 43b26f4cc53ba3260526e4b01fc787d184b18b22[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Thu Feb 4 22:55:38 2021 +0000
+
+    back
+
+[33mcommit babb9c1baae255c8c3f529e1a193584f187a651e[m
+Merge: 46151f1 16747bf
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Wed Feb 3 23:46:48 2021 +0000
+
+    Merge branch 'master' of github.com:acdiaconu/concurrent-fp
+
+[33mcommit 46151f143fd994bfbba5da412121d97ee763afc4[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Wed Feb 3 23:46:21 2021 +0000
+
+    almost done
+
+[33mcommit 16747bfc2471278ccf9fe17b01b7ae3c28573740[m
+Author: acdiaconu <40471624+acdiaconu@users.noreply.github.com>
+Date:   Wed Feb 3 14:23:07 2021 +0000
+
+    Update README.md
+
+[33mcommit 7cdff75b8a3c7d9a13f3297c6654f10d816eb587[m
+Author: acdiaconu <40471624+acdiaconu@users.noreply.github.com>
+Date:   Tue Feb 2 21:56:50 2021 +0000
+
+    Update README.md
+
+[33mcommit 6402d3d6286336d03b14e702ade70c6cc8582ea0[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Tue Feb 2 21:53:41 2021 +0000
+
+    Started changing the big interpreter
+
+[33mcommit 4e41c93e94858645acb80f8592e706be3ccf0cef[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Mon Feb 1 23:02:05 2021 +0000
+
+    Multi prompt working
+    
+    Got the multiprompt working fine, with both exceptions and interleaving,
+    behaving very nicely
+
+[33mcommit 94f33ac12abe9b893d9a7d4653b60d7ffd196f05[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Sat Jan 30 20:14:43 2021 +0000
+
+    update struct
+
+[33mcommit d56610c21c4b5a24cf5c2be8c4b6b68b5bd1436f[m
+Author: Andrei Diaconu <acdiaconu98@gmail.com>
+Date:   Sat Jan 30 20:10:45 2021 +0000
+
+    init
