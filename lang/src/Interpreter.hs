@@ -1,7 +1,3 @@
-{- 
-  Monadic definitional interpreter.
--}
-
 module Interpreter(obey, init_cst, init_env) where
 
 import Parsing
@@ -14,12 +10,9 @@ import Data.List (intercalate)
 
 import Control.Monad
 import Control.Monad.Trans (lift)
-import CCExc
+import CCExc -- delimited continuations library
 
 import Debug.Trace
-
--- TODO: A more algebraic approach, to allow easy combination of ``pure"
---       algebraic effects (i.e. create a class for state as a first step)
 
 ----- State monad -----
 newtype State s a = State { runS :: s -> (a, s) }
@@ -82,7 +75,6 @@ data Value =
   | Resume (Kont Value)
   | Halted ChanID
   | Waiting ChanID              
-
 
 ----- Some useful instances -----
 instance Eq Value where
@@ -155,11 +147,11 @@ eval (Match ex pats) env =
 eval (Send ce ve) env =
   do v <- eval (SendP ce ve) env
      case v of 
-       Exception _ -> shift pX $ \_ -> return v
+       Exception _ -> captureUpTo pX $ \_ -> return v
        _           -> return v
 
 eval (SendP ce ve) env = 
-  shift pP$ \rest -> 
+  captureUpTo pP$ \rest -> 
   do 
     ChanHandle l <- eval ce env 
     v <- eval ve env 
@@ -186,11 +178,11 @@ eval (SendP ce ve) env =
 eval (Receive ce) env =
   do v <- eval (ReceiveP ce) env
      case v of 
-       Exception _ -> (shift pX $ \_ -> return v)
+       Exception _ -> (captureUpTo pX $ \_ -> return v)
        _           -> return v
 
 eval (ReceiveP ce) env = 
-  shift pP$ \rest ->
+  captureUpTo pP $ \rest ->
   do 
     ChanHandle l <- eval ce env
     sus <- lift $ 
@@ -247,11 +239,11 @@ eval (TryCatch ex pats) env =
       Exception e -> case matchpat e pats env of
                       Just (pex, env') -> eval pex env'
                       -- If no handler handles our error, propagate
-                      Nothing          -> shift pX $ \_ -> return $ Exception e
+                      Nothing          -> captureUpTo pX $ \_ -> return $ Exception e
       _           -> return val -- No error, so just return the value.
     
 eval (Throw th) env = 
-  shift pX $ \_ ->
+  captureUpTo pX $ \_ ->
   do v <- eval th env 
      case v of
        Injection n vs -> return $ Exception v
@@ -331,7 +323,6 @@ values (c:cvs) =
      vs <- values cvs 
      return (v:vs)
 
--- TODO: Fix no error when undefined exception because of lazyness
 -- Expr for the following two functions is a pattern (leaves are variables)
 -- Note: while Pattern in the signatures below is a type synonym for Expr, 
 -- we require that it is restricted to `Variable' and `Apply ...', where the
@@ -365,7 +356,6 @@ accumBindings (v:vs) (p:ps) env = case trymatch v p env of
   Just env' -> accumBindings vs ps env'
   Nothing   -> Nothing 
 
--- Helper function that 
 appToInj :: Expr -> [Expr] -> Expr
 appToInj (Apply (Variable v) x) ps = Injector v (x:ps)
 appToInj (Apply x y) ps = appToInj x (y:ps)

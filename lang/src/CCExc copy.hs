@@ -59,8 +59,18 @@ module CCExc (
               runCC,
 
               -- Useful derived operations
-              captureUpTo,
-            P2, pP, pX, -- The prompts we use in our interpreter.
+	          abortP,
+              shift,
+              shift0P,
+              controlP,
+
+          -- Pre-defined prompt flavors
+	      PS, ps,
+              P2, pP, pX, -- The prompts we use in our interpreter.
+              PP, ppp,
+              PM, pm,
+              PD, newPrompt,
+              as_prompt_type
 	      ) where
 
 import Control.Monad.Trans
@@ -144,14 +154,43 @@ runCC m = unCC m >>= check
 -- --------------------------------------------------------------------
 -- Useful derived operations
 
-captureUpTo :: Monad m => 
+abortP :: Monad m => 
+	  Prompt p m w -> CC p m w -> CC p m any
+abortP p e = takeSubCont p (\_ -> e)
+
+shift :: Monad m => 
 	  Prompt p m w -> ((a -> CC p m w) -> CC p m w) -> CC p m a
-captureUpTo p f = takeSubCont p $ \sk -> 
+shift p f = takeSubCont p $ \sk -> 
 	       pushPrompt p (f (\c -> 
 		  pushPrompt p (pushSubCont sk (return c))))
 
+shift0P :: Monad m => 
+	  Prompt p m w -> ((a -> CC p m w) -> CC p m w) -> CC p m a
+shift0P p f = takeSubCont p $ \sk -> 
+	       f (\c -> 
+		  pushPrompt p (pushSubCont sk (return c)))
+
+controlP :: Monad m => 
+	  Prompt p m w -> ((a -> CC p m w) -> CC p m w) -> CC p m a
+controlP p f = takeSubCont p $ \sk -> 
+	       pushPrompt p (f (\c -> 
+		  pushSubCont sk (return c)))
+
 -- --------------------------------------------------------------------
 -- Prompt flavors
+
+-- The extreme case: prompts for the single answer-type w.
+-- The monad (CC PS) then is the monad for regular (single-prompt) 
+-- delimited continuations
+newtype PS w m x = PS (CCT (PS  w) m x w)
+
+-- There is only one generalized prompt of the flavor PS for a
+-- given answer-type w. It is defined below
+ps :: Prompt (PS w) m w
+ps = (inj, prj)
+ where
+ inj = PS
+ prj (PS x) = Just x
 
 -- Prompts for the closed set of answer-types
 -- The following prompt flavor P2, for two answer-types w1 and w2,
@@ -176,3 +215,55 @@ pX = (inj, prj)
  inj = P2 . Right
  prj (P2 (Right x)) = Just x
  prj _ = Nothing
+
+
+-- Prompts for the open set of answer-types
+
+data PP m x = forall w. Typeable w => PP (CCT PP m x w)
+
+-- We need to wrap the type alias CCT into a newtype. Otherwise, gcast
+-- doesn't work. We can't treat (CCT p m a w) as a an application of
+-- the `type constructor' (CCT p m a) to the type w: type aliases can't 
+-- be partially applied. But we can treat the type (NCCT p m a w) that way.
+newtype NCCT p m a w = NCCT{unNCCT :: CCT p m a w}
+
+ppp :: Typeable w => Prompt PP m w
+ppp = (inj, prj)
+ where
+ inj = PP
+ prj (PP c) = maybe Nothing (Just . unNCCT) (gcast (NCCT c))
+
+-- The same as PP but with the phantom parameter c
+-- The parameter is useful to statically enforce various constrains
+-- (statically pass some information between shift and reset)
+-- The prompt PP is too `dynamic': all errors are detected dynamically
+-- See Generator2.hs for an example
+data PM c m x = forall w. Typeable w => PM (CCT (PM c) m x w)
+
+pm :: Typeable w => Prompt (PM c) m w
+pm = (inj, prj)
+ where
+ inj = PM
+ prj (PM c) = maybe Nothing (Just . unNCCT) (gcast (NCCT c))
+
+-- Open set of answer types, with an additional distinction (given by
+-- integer identifiers)
+-- This prompt flavor corresponds to the prompts in the Dybvig, Peyton-Jones,
+-- Sabry framework (modulo the Typeable constraint).
+
+data PD m x = forall w. Typeable w => PD Int (CCT PD m x w)
+
+newPrompt :: Typeable w => Int -> Prompt PD m w
+newPrompt mark = (inj, prj)
+ where
+ inj = PD mark
+ prj (PD mark' c) | mark' == mark, 
+		    Just (NCCT x) <- gcast (NCCT c) = Just x
+ prj _ = Nothing
+
+-- It is often helpful, for clarity of error messages, to specify the 
+-- answer-type associated with the prompt explicitly (rather than relying 
+-- on the type inference to figure that out). The following function
+-- is useful for that purpose.
+as_prompt_type :: Prompt p m w -> w -> Prompt p m w
+as_prompt_type = const

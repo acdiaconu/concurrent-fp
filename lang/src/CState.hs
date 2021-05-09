@@ -8,7 +8,7 @@ import qualified Data.Map as Map
 -- Channel IDs are integers
 newtype ChanID = ChanID Integer deriving Eq
 
-instance Show ChanID where 
+instance Show ChanID where
   show (ChanID u) = show u
 
 data CType v k = Empty 
