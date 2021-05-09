@@ -384,10 +384,10 @@ init_cst = CST empty_cst
 -- first run the (continuation) computation to produce a state computation,
 -- which when ran produces the new state, together with the desired result.
 obey :: Phrase -> ProgState -> (String, ProgState)
-obey (Calculate exp) (env, mem) =
-  let (v, mem') = (runS . runCC) (pushPrompt pX (eval exp env)) mem in 
-  (show v, (env, mem'))
-obey (Define def) (env, mem) =
+obey (Calculate exp) (env, cst) =
+  let (v, cst') = (runS . runCC) (pushPrompt pX (eval exp env)) cst in 
+  (show v, (env, cst'))
+obey (Define def) (env, cst) =
   let x = def_lhs def in
-  let (env', mem') = (runS . runCC) (elab def env) mem in 
-  ("Added definition: " ++ x, (env', mem'))
+  let (env', cst') = (runS . runCC) (elab def env) cst in 
+  ("Added definition: " ++ x, (env', cst'))
